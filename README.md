@@ -13,7 +13,7 @@ Build instructions
 
 The easiest way is to use the `gd` tool -- https://code.google.com/p/godag/wiki/Install
 
-    ```bash
-    gd -o main
-    ./main
-    ```
+```bash
+$ gd -o main
+$ ./main
+```
