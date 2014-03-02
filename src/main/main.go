@@ -2,13 +2,13 @@ package main
 
 import (
 	"bencode"
-	// "fmt"
+	"fmt"
 	"io/ioutil"
 	"os"
 )
 
 func main() {
-	path := "/home/gabi/Downloads/Windows XP Professional SP3 (x86) Integrated March 2013-Fl.torrent"
+	path := os.Args[1]
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		panic(err)
@@ -18,6 +18,6 @@ func main() {
 		panic(err)
 	}
 
-	os.Stdout.Write(res.Encode())
-	// fmt.Println(res.Dump())
+	// os.Stdout.Write(res.Encode())
+	fmt.Println(res.Dump())
 }
