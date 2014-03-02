@@ -1,3 +1,8 @@
+// BEncoding encode/decode functionalities. Note that all
+// the Parse* functions also return a "rest" byte slice.
+// this is because those functions only parse the first
+// bencoded type they find, and simply give back the rest
+// of the source
 package bencode
 
 import (
@@ -6,6 +11,10 @@ import (
 	"fmt"
 )
 
+// this is the basic bencoded interface
+// the only allowed types that will implement
+// this interface are Number, String, List
+// and Dictionary
 type Bencoder interface {
 	// shows a JSON-like human-readable output
 	Dump() string
@@ -14,14 +23,19 @@ type Bencoder interface {
 	Encode() []byte
 }
 
+// A mapping from String to another bencoded type
 type Dictionary struct {
-	Values map[*Bencoder]*Bencoder
+	Values map[*String]*Bencoder
 }
 
+// A list of bencoded types
 type List struct {
 	Values []*Bencoder
 }
 
+// A bencoded string is actually a byte array. This is
+// used a lot in .torrent files, where strings are
+// actually binary blobs
 type String struct {
 	Value []byte
 }
@@ -106,18 +120,20 @@ func (n Number) Encode() []byte {
 
 func ParseDictionary(source []byte) (res Dictionary, rest []byte, err error) {
 	if len(source) == 0 || source[0] != 'd' {
-		return Dictionary{}, []byte{}, errors.New("fMalformed string given")
+		return Dictionary{}, []byte{}, errors.New("Malformed string given")
 	}
-	dict := Dictionary{make(map[*Bencoder]*Bencoder)}
+	dict := Dictionary{make(map[*String]*Bencoder)}
 
 	// fake it as a "list" and then process the resulting elements
 	source[0] = 'l'
 	list, r, err := ParseList(source)
 	source[0] = 'd'
+
 	if err != nil {
 		return Dictionary{}, []byte{}, err
 	}
 
+	// must have elements in key -> value pairs
 	if len(list.Values)%2 != 0 {
 		return Dictionary{}, []byte{}, errors.New("Malformed dictionary")
 	}
@@ -129,9 +145,11 @@ func ParseDictionary(source []byte) (res Dictionary, rest []byte, err error) {
 		key = list.Values[i]
 		value = list.Values[j]
 
+		// dictionary keys are required to be strings
 		switch (*key).(type) {
 		case String:
-			dict.Values[key] = value
+			str := (*key).(String)
+			dict.Values[&str] = value
 		default:
 			return Dictionary{}, []byte{}, errors.New("Invalid dictionary")
 		}
@@ -156,15 +174,12 @@ func ParseList(source []byte) (res List, rest []byte, err error) {
 		list.Values = append(list.Values, &val)
 	}
 
-	if len(source) == 0 {
+	if len(source) == 0 || source[0] != 'e' {
 		return List{}, []byte{}, errors.New("Malformed string given")
 	}
 
-	if source[0] == 'e' {
-		source = source[1:]
-	}
-
-	return list, source, nil
+	// remove the final 'e'
+	return list, source[1:], nil
 }
 
 func ParseString(source []byte) (res String, rest []byte, err error) {
@@ -201,11 +216,16 @@ func ParseNumber(source []byte) (res Number, rest []byte, err error) {
 		}
 	}
 
+	if idx >= length {
+		return Number{}, []byte{}, errors.New("Malformed string given")
+	}
+
 	var num int64
 	fmt.Sscanf(string(source[1:idx]), "%d", &num)
 	return Number{Value: num}, source[idx+1:], nil
 }
 
+// parse a generic bencoded string
 func Parse(source []byte) (res Bencoder, rest []byte, err error) {
 	if len(source) == 0 {
 		return Dictionary{}, []byte{}, errors.New("Empty string given")
