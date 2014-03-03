@@ -28,6 +28,8 @@ func main() {
 	fmt.Println("Comment : ", torrentInfo.Comment)
 	fmt.Println("Created by : " , torrentInfo.CreatedBy)
 	fmt.Println("Encoding : " , torrentInfo.Encoding)
+	fmt.Println("Piece Length : ", torrentInfo.FileInformations.PieceLength)
+	fmt.Println("Private : " , torrentInfo.FileInformations.Private)
 	fmt.Println("More than two files? : ", torrentInfo.FileInformations.MultipleFiles)
 	fmt.Println("File name / root name : " , torrentInfo.FileInformations.RootPath)
 	fmt.Println()
