@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"torrent_info"
 )
 
 func main() {
@@ -17,7 +18,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	// os.Stdout.Write(res.Encode())
-	fmt.Println(res.Dump())
+	fmt.Println("-----")
+	
+	torrentInfo := torrent_info.GetInfoFromBencoder(res)
+	
+	fmt.Println(torrentInfo)
+	//res.Dump()
 }
