@@ -30,8 +30,32 @@ type TorrentInfo struct {
 	Encoding string	
 }
 
-func getFilesInformationFromBencoder(decoded bencode.Bencoder , output *TorrentInfo) {
+func getFileInformationFromBencoder(decoded bencode.Bencoder , output *TorrentInfo) {
+	dictionary := decoded.(bencode.Dictionary)
 	
+	oneFile := SingleFileInfo{}
+	
+	for keys,values := range dictionary.Values {
+	
+		keyString := string((*keys).Value)
+		switch keyString {
+			case "path" :
+				// This is a list of paths
+				var pathString string = ""
+				pathsList := (*values).(bencode.List)
+				for _,pathPart:= range pathsList.Values {
+					pathString += "/" + string((*pathPart).(bencode.String).Value)
+				}
+				oneFile.Name = pathString
+			case "length" :
+				oneFile.Length = (*values).(bencode.Number).Value
+			case "md5sum" :
+				oneFile.Md5sum = string((*values).(bencode.String).Value)
+			default : 
+		}
+	}
+	
+	output.FileInformations.Files = append(output.FileInformations.Files , oneFile)
 }
 
 func getInfoDictionaryFromBencoder(decoded bencode.Bencoder , output *TorrentInfo) {
@@ -70,6 +94,13 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder , output *TorrentInf
 			switch keyString {
 				case "name" : 
 					output.FileInformations.RootPath = string((*values).(bencode.String).Value)
+				case "files" :
+					// We have a list of dictionaries
+					fileList := (*values).(bencode.List)
+					for _,oneFileBencoded := range fileList.Values {
+						getFileInformationFromBencoder(*oneFileBencoded , output)
+					}
+				
 				default :
 			}
 		}
