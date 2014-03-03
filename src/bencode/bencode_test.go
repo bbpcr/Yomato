@@ -12,15 +12,15 @@ const TORRENT_FILE_1 = "test_data/1.torrent"
 // dictionaries
 func TestBasicParsing(t *testing.T) {
 	var n3, n4, sabcd Bencoder
-	n3 = Number{3}
-	n4 = Number{4}
-	sabcd = String{[]byte("abcd")}
+	n3 = &Number{3}
+	n4 = &Number{4}
+	sabcd = &String{"abcd"}
 	tests := map[string]Bencoder{
-		"i0e":            Number{0},
-		"i-3e":           Number{-3},
-		"2:ab":           String{[]byte("ab")},
-		"1::":            String{[]byte(":")},
-		"li3ei4e4:abcde": List{[]*Bencoder{&n3, &n4, &sabcd}},
+		"i0e":            &Number{0},
+		"i-3e":           &Number{-3},
+		"2:ab":           &String{"ab"},
+		"1::":            &String{":"},
+		"li3ei4e4:abcde": &List{[]Bencoder{n3, n4, sabcd}},
 	}
 
 	for source, expectedOutput := range tests {
