@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bencode"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"torrent_info"
+    "bencode"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "torrent_info"
 )
 
 func main() {
@@ -14,18 +14,18 @@ func main() {
         return
     }
 
-	path := os.Args[1]
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	res, _, err := bencode.Parse(data)
-	if err != nil {
-		panic(err)
-	}
+    path := os.Args[1]
+    data, err := ioutil.ReadFile(path)
+    if err != nil {
+        panic(err)
+    }
+    res, _, err := bencode.Parse(data)
+    if err != nil {
+        panic(err)
+    }
 
     var torrentInfo *torrent_info.TorrentInfo
-	if torrentInfo, err = torrent_info.GetInfoFromBencoder(res); err != nil {
+    if torrentInfo, err = torrent_info.GetInfoFromBencoder(res); err != nil {
         panic(err)
     }
 
