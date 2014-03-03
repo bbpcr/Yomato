@@ -24,9 +24,12 @@ func TestBasicParsing(t *testing.T) {
 	}
 
 	for source, expectedOutput := range tests {
-		output, _, err := Parse([]byte(source))
+		output, rest, err := Parse([]byte(source))
 		if err != nil {
 			t.Errorf("Test \"%s\" not parsed correctly. Got error: %S", source, err)
+		}
+		if len(rest) > 0 {
+			t.Fatal("Rest is not empty")
 		}
 		if !reflect.DeepEqual(output, expectedOutput) {
 			t.Errorf("Test \"%s\" not parsed correctly.", source)
@@ -41,9 +44,13 @@ func TestAdvancedParsing(t *testing.T) {
 		panic(err)
 	}
 
-	output, _, err := Parse(source)
+	output, rest, err := Parse(source)
 	if err != nil {
 		t.Fatalf("Got error: %S", err)
+	}
+
+	if len(rest) > 0 {
+		t.Fatal("Rest is not empty")
 	}
 
 	sourceOutput := output.Encode()
