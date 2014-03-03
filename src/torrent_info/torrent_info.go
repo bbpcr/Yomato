@@ -14,6 +14,7 @@ type InfoDictionary struct {
 	
 	RootPath string
 	Files []SingleFileInfo
+	MultipleFiles bool
 	PieceLength int64
 	Pieces string
 	Private int64
@@ -49,17 +50,18 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder , output *TorrentInf
 		}
 	}
 	
-	var multipleFiles bool = false
+	output.FileInformations.MultipleFiles = false
+	
 	// Check if there are multiple files or not
 	for keys,_ := range dictionary.Values {
 	
 		keyString := string((*keys).Value)
 		if keyString == "files" {
-			multipleFiles = true
+			output.FileInformations.MultipleFiles = true
 		}
 	}
 	
-	if multipleFiles {
+	if output.FileInformations.MultipleFiles {
 		//We have two or more files
 		
 		for keys,values := range dictionary.Values {
