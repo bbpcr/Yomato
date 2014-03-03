@@ -1,4 +1,4 @@
-// BEncoding encode/decode functionalities. Note that all
+// Bencoding encode/decode functionalities. Note that all
 // the Parse* functions also return a "rest" byte slice.
 // this is because those functions only parse the first
 // bencoded type they find, and simply give back the rest
