@@ -1,6 +1,6 @@
-.PHONY: all test-bencode nicecode test
+.PHONY: all test-bencode nicecode test yomato
 
-all: test
+all: test yomato
 
 nicecode:
 	gofmt -w .
@@ -12,3 +12,6 @@ test-bencode:
 	cp -R test_data bencode/test_data
 	go test ...bencode
 	rm -rf bencode/test_data
+
+yomato:
+	go build ...yomato
