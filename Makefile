@@ -14,4 +14,4 @@ test-bencode:
 	rm -rf bencode/test_data
 
 yomato:
-	go build ...yomato
+	go install ...yomato
