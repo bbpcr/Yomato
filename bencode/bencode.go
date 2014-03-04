@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // this is the basic bencoded interface
@@ -42,6 +43,20 @@ type String struct {
 	Value string
 }
 
+type byStringValue []String
+
+func (v byStringValue) Len() int {
+	return len(v)
+}
+
+func (v byStringValue) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
+}
+
+func (v byStringValue) Less(i, j int) bool {
+	return v[i].Value < v[j].Value
+}
+
 type Number struct {
 	Value int64
 }
@@ -49,8 +64,18 @@ type Number struct {
 func (d Dictionary) Dump() string {
 	var buffer bytes.Buffer
 
+	keys := []String{}
+
+	for key, _ := range d.Values {
+		keys = append(keys, key)
+	}
+
+	sort.Sort(byStringValue(keys))
+
 	buffer.WriteString("{ ")
-	for key, val := range d.Values {
+
+	for _, key := range keys {
+		val := d.Values[key]
 		buffer.WriteString(key.Dump())
 		buffer.WriteString(" : ")
 		buffer.WriteString(val.Dump())
@@ -64,8 +89,19 @@ func (d Dictionary) Dump() string {
 func (d Dictionary) Encode() []byte {
 	var buffer bytes.Buffer
 
+
+	keys := []String{}
+
+	for key, _ := range d.Values {
+		keys = append(keys, key)
+	}
+
+	sort.Sort(byStringValue(keys))
+
 	buffer.WriteByte('d')
-	for key, val := range d.Values {
+
+	for _, key := range keys {
+		val := d.Values[key]
 		buffer.Write(key.Encode())
 		buffer.Write(val.Encode())
 	}
