@@ -56,7 +56,8 @@ func TestAdvancedParsing(t *testing.T) {
 	sourceOutput := output.Encode()
 
 	if !reflect.DeepEqual(source, sourceOutput) {
-		t.Fatalf("Source and encoding don't match.")
+		t.Fatalf("Source and encoding don't match. " + string(source) +
+				 " vs " + string(sourceOutput))
 	}
 }
 
