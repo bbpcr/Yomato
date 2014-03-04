@@ -5,8 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/bbcpr/Yomato/bencode"
-	"github.com/bbcpr/Yomato/torrent_info"
+	"github.com/bbpcr/Yomato/bencode"
+	"github.com/bbpcr/Yomato/torrent_info"
 )
 
 func main() {

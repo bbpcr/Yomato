@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bbcpr/Yomato/bencode"
+	"github.com/bbpcr/Yomato/bencode"
 )
 
 type SingleFileInfo struct {
