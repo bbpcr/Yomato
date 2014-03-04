@@ -1,261 +1,243 @@
 package torrent_info
 
 import (
-	"bencode"
+    "bencode"
+    "errors"
+    "fmt"
 )
 
 type SingleFileInfo struct {
-	Name   string
-	Length int64
-	Md5sum string
+    Name   string
+    Length int64
+    Md5sum string
 }
 
 type InfoDictionary struct {
-	RootPath      string
-	Files         []SingleFileInfo
-	MultipleFiles bool
-	PieceLength   int64
-	Pieces        string
-	Private       int64
+    RootPath      string
+    Files         []SingleFileInfo
+    MultipleFiles bool
+    PieceLength   int64
+    Pieces        string
+    Private       int64
 }
 
 type TorrentInfo struct {
-	FileInformations InfoDictionary
-	AnnounceUrl      string
-	AnnounceList     []string
-	CreationDate     int64
-	Comment          string
-	CreatedBy        string
-	Encoding         string
+    FileInformations InfoDictionary
+    AnnounceUrl      string
+    AnnounceList     []string
+    CreationDate     int64
+    Comment          string
+    CreatedBy        string
+    Encoding         string
 }
 
-const DICTIONARY_TYPE = 4
-const NUMBER_TYPE = 2
-const LIST_TYPE = 3
-const STRING_TYPE = 1
+func (torrentInfo TorrentInfo) Description() string {
+    description :=
+        fmt.Sprintln("-----") +
+            fmt.Sprintln("Announce url :", torrentInfo.AnnounceUrl) +
+            fmt.Sprintln("Announce additional list :", torrentInfo.AnnounceList) +
+            fmt.Sprintln("Creation date :", torrentInfo.CreationDate) +
+            fmt.Sprintln("Comment :", torrentInfo.Comment) +
+            fmt.Sprintln("Created by :", torrentInfo.CreatedBy) +
+            fmt.Sprintln("Encoding :", torrentInfo.Encoding) +
+            fmt.Sprintln("Piece Length :", torrentInfo.FileInformations.PieceLength) +
+            fmt.Sprintln("Private :", torrentInfo.FileInformations.Private) +
+            fmt.Sprintln("Simple Single file torrent? :", !torrentInfo.FileInformations.MultipleFiles) +
+            fmt.Sprintln("File name / root name :", torrentInfo.FileInformations.RootPath) +
+            "\n"
 
-func checkType(decoded bencode.Bencoder, typeId int) bool {
+    for index, fileInfo := range torrentInfo.FileInformations.Files {
+        description +=
+            fmt.Sprintln("    File #", index, "-------") +
+                fmt.Sprintln("    Name : ", fileInfo.Name) +
+                fmt.Sprintln("    Size : ", fileInfo.Length) +
+                fmt.Sprintln("    Md5sum (not always present) : ", fileInfo.Md5sum)
+    }
 
-	// 1 - String
-	// 2 - Number
-	// 3 - List
-	// 4 - Dictionary
-
-	switch decoded.(type) {
-	case bencode.String:
-		return (typeId == STRING_TYPE)
-	case bencode.Number:
-		return (typeId == NUMBER_TYPE)
-	case bencode.List:
-		return (typeId == LIST_TYPE)
-	case bencode.Dictionary:
-		return (typeId == DICTIONARY_TYPE)
-	default:
-		return false
-	}
+    return description + fmt.Sprintln("-----")
 }
 
-func getFileInformationFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) {
+func getFileInformationFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) error {
 
-	if !checkType(decoded, DICTIONARY_TYPE) {
-		return
-	}
+    if _, isDictionary := decoded.(*bencode.Dictionary); !isDictionary {
+        return errors.New("Malformed torrent file")
+    }
 
-	dictionary := decoded.(bencode.Dictionary)
+    dictionary := decoded.(*bencode.Dictionary)
 
-	oneFile := SingleFileInfo{}
+    oneFile := SingleFileInfo{}
 
-	for keys, values := range dictionary.Values {
+    for key, value := range dictionary.Values {
+        switch key.Value {
+        case "path":
+            // This should be a list of string paths
 
-		keyString := string((*keys).Value)
-		switch keyString {
-		case "path":
-			// This should be a list of string paths
+            var pathString string = ""
+            if pathsList, isList := value.(*bencode.List); isList {
+                for _, pathPart := range pathsList.Values {
+                    if data, isString := pathPart.(*bencode.String); isString {
+                        pathString += "/" + data.Value
+                    }
+                }
+            }
+            oneFile.Name = pathString
+        case "length":
+            if data, isNumber := value.(*bencode.Number); isNumber {
+                oneFile.Length = data.Value
+            }
+        case "md5sum":
+            if data, isString := value.(*bencode.String); isString {
+                oneFile.Md5sum = data.Value
+            }
+        default:
+        }
+    }
 
-			if !checkType(*values, LIST_TYPE) {
-				continue
-			}
-
-			var pathString string = ""
-			pathsList := (*values).(bencode.List)
-			for _, pathPart := range pathsList.Values {
-				if checkType(*pathPart, STRING_TYPE) {
-					pathString += "/" + string((*pathPart).(bencode.String).Value)
-				}
-			}
-			oneFile.Name = pathString
-		case "length":
-			if checkType(*values, NUMBER_TYPE) {
-				oneFile.Length = (*values).(bencode.Number).Value
-			}
-		case "md5sum":
-			if checkType(*values, STRING_TYPE) {
-				oneFile.Md5sum = string((*values).(bencode.String).Value)
-			}
-		default:
-		}
-	}
-
-	output.FileInformations.Files = append(output.FileInformations.Files, oneFile)
+    output.FileInformations.Files = append(output.FileInformations.Files, oneFile)
+    return nil
 }
 
-func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) {
+func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) error {
 
-	if !checkType(decoded, DICTIONARY_TYPE) {
-		return
-	}
+    if _, isDictionary := decoded.(*bencode.Dictionary); !isDictionary {
+        return errors.New("Malformed torrent file")
+    }
 
-	dictionary := decoded.(bencode.Dictionary)
+    dictionary := decoded.(*bencode.Dictionary)
 
-	for keys, values := range dictionary.Values {
+    for key, value := range dictionary.Values {
+        switch key.Value {
+        case "piece length":
+            if data, isNumber := value.(*bencode.Number); isNumber {
+                output.FileInformations.PieceLength = data.Value
+            }
+        case "pieces":
+            if data, isString := value.(*bencode.String); isString {
+                output.FileInformations.Pieces = data.Value
+            }
+        case "private":
+            if data, isNumber := value.(*bencode.Number); isNumber {
+                output.FileInformations.Private = data.Value
+            }
+        }
+    }
 
-		keyString := string((*keys).Value)
-		switch keyString {
-		case "piece length":
-			if checkType(*values, NUMBER_TYPE) {
-				output.FileInformations.PieceLength = (*values).(bencode.Number).Value
-			}
-		case "pieces":
-			if checkType(*values, STRING_TYPE) {
-				output.FileInformations.Pieces = string((*values).(bencode.String).Value)
-			}
-		case "private":
-			if checkType(*values, NUMBER_TYPE) {
-				output.FileInformations.Private = (*values).(bencode.Number).Value
-			}
-		}
-	}
+    output.FileInformations.MultipleFiles = false
 
-	output.FileInformations.MultipleFiles = false
+    // Check if there are multiple files or not
+    for key, _ := range dictionary.Values {
+        if key.Value == "files" {
+            output.FileInformations.MultipleFiles = true
+            break
+        }
+    }
 
-	// Check if there are multiple files or not
-	for keys, _ := range dictionary.Values {
+    if output.FileInformations.MultipleFiles {
+        //We have two or more files
 
-		keyString := string((*keys).Value)
-		if keyString == "files" {
-			output.FileInformations.MultipleFiles = true
-		}
-	}
+        for key, value := range dictionary.Values {
+            switch key.Value {
+            case "name":
+                if data, isString := value.(*bencode.String); isString {
+                    output.FileInformations.RootPath = data.Value
+                }
+            case "files":
+                if fileList, isList := value.(*bencode.List); isList {
+                    for _, oneFileBencoded := range fileList.Values {
+                        if err := getFileInformationFromBencoder(
+                            oneFileBencoded, output); err != nil {
+                            return err
+                        }
+                    }
+                }
 
-	if output.FileInformations.MultipleFiles {
-		//We have two or more files
+            default:
+            }
+        }
+    } else {
+        // We have only one file
+        oneFile := SingleFileInfo{}
+        for key, value := range dictionary.Values {
+            switch key.Value {
+            case "name":
+                if data, isString := value.(*bencode.String); isString {
+                    output.FileInformations.RootPath = data.Value
+                    oneFile.Name = data.Value
+                }
+            case "length":
+                if data, isNumber := value.(*bencode.Number); isNumber {
+                    oneFile.Length = data.Value
+                }
+            case "md5sum":
+                if data, isString := value.(*bencode.String); isString {
+                    oneFile.Md5sum = data.Value
+                }
+            default:
 
-		for keys, values := range dictionary.Values {
+            }
+        }
 
-			keyString := string((*keys).Value)
-			switch keyString {
-			case "name":
-				if checkType(*values, STRING_TYPE) {
-					output.FileInformations.RootPath = string((*values).(bencode.String).Value)
-				}
-			case "files":
-				// We should have a list of dictionaries
-				if !checkType(*values, LIST_TYPE) {
-					continue
-				}
-				fileList := (*values).(bencode.List)
-				for _, oneFileBencoded := range fileList.Values {
-					getFileInformationFromBencoder(*oneFileBencoded, output)
-				}
+        output.FileInformations.Files = append(output.FileInformations.Files, oneFile)
 
-			default:
-			}
-		}
-
-	} else {
-
-		// We have only one file
-		oneFile := SingleFileInfo{}
-		for keys, values := range dictionary.Values {
-
-			keyString := string((*keys).Value)
-			switch keyString {
-			case "name":
-				if checkType(*values, STRING_TYPE) {
-					output.FileInformations.RootPath = string((*values).(bencode.String).Value)
-					oneFile.Name = output.FileInformations.RootPath
-				}
-			case "length":
-				if checkType(*values, NUMBER_TYPE) {
-					oneFile.Length = (*values).(bencode.Number).Value
-				}
-			case "md5sum":
-				if checkType(*values, STRING_TYPE) {
-					oneFile.Md5sum = string((*values).(bencode.String).Value)
-				}
-			default:
-
-			}
-		}
-
-		output.FileInformations.Files = append(output.FileInformations.Files, oneFile)
-
-	}
-
+    }
+    return nil
 }
 
-func GetInfoFromBencoder(decoded bencode.Bencoder) TorrentInfo {
+func GetInfoFromBencoder(decoded bencode.Bencoder) (*TorrentInfo, error) {
 
-	info := TorrentInfo{}
+    info := &TorrentInfo{}
 
-	// check is bencoder is a bencode.Dictionary
-	if !checkType(decoded, DICTIONARY_TYPE) {
-		return info
-	}
+    // check is bencoder is a bencode.Dictionary
+    if _, isDictionary := decoded.(*bencode.Dictionary); !isDictionary {
+        return info, errors.New("Malformed torrent file")
+    }
 
-	dictionary := decoded.(bencode.Dictionary)
+    dictionary := decoded.(*bencode.Dictionary)
 
-	for keys, values := range dictionary.Values {
-		keyString := string((*keys).Value)
+    // let's not throw an error of the type does not match for the simple ones
+    // the info field however is very important
+    for key, value := range dictionary.Values {
+        switch key.Value {
+        case "announce":
+            if data, isString := value.(*bencode.String); isString {
+                info.AnnounceUrl = data.Value
+            }
+        case "comment":
+            if data, isString := value.(*bencode.String); isString {
+                info.Comment = data.Value
+            }
+        case "created by":
+            if data, isString := value.(*bencode.String); isString {
+                info.CreatedBy = data.Value
+            }
+        case "creation date":
+            if data, isNumber := value.(*bencode.Number); isNumber {
+                info.CreationDate = data.Value
+            }
+        case "encoding":
+            if data, isString := value.(*bencode.String); isString {
+                info.Encoding = data.Value
+            }
+        case "announce-list":
+            // It should be a list of list of strings but we check each time we convert the interface
+            if announceList, isList := value.(*bencode.List); isList {
+                for _, listBencoder := range announceList.Values {
+                    if announce, isList := listBencoder.(*bencode.List); isList {
+                        for _, str := range announce.Values {
+                            if realString, isString := str.(*bencode.String); isString {
+                                info.AnnounceList = append(info.AnnounceList, realString.Value)
+                            }
+                        }
+                    }
+                }
+            }
+        case "info":
+            if err := getInfoDictionaryFromBencoder(value, info); err != nil {
+                return info, err
+            }
+        default:
 
-		switch keyString {
-		case "announce":
-			if checkType(*values, STRING_TYPE) {
-				info.AnnounceUrl = string((*values).(bencode.String).Value)
-			}
-		case "comment":
-			if checkType(*values, STRING_TYPE) {
-				info.Comment = string((*values).(bencode.String).Value)
-			}
-		case "created by":
-			if checkType(*values, STRING_TYPE) {
-				info.CreatedBy = string((*values).(bencode.String).Value)
-			}
-		case "creation date":
-			if checkType(*values, NUMBER_TYPE) {
-				info.CreationDate = (*values).(bencode.Number).Value
-			}
-		case "encoding":
-			if checkType(*values, STRING_TYPE) {
-				info.Encoding = string((*values).(bencode.String).Value)
-			}
-		case "announce-list":
-
-			// It should be a list of list of strings but we check each time we convert the interface
-			if !checkType(*values, LIST_TYPE) {
-				continue
-			}
-			announceListStrings := (*values).(bencode.List)
-			for _, listBencoder := range announceListStrings.Values {
-
-				if !checkType(*listBencoder, LIST_TYPE) {
-					continue
-				}
-
-				realList := (*listBencoder).(bencode.List)
-
-				for _, strings := range realList.Values {
-					if checkType(*strings, STRING_TYPE) {
-						realString := (*strings).(bencode.String)
-						info.AnnounceList = append(info.AnnounceList, string(realString.Value))
-					}
-				}
-			}
-		case "info":
-			getInfoDictionaryFromBencoder(*values, &info)
-		default:
-
-		}
-	}
-	return info
+        }
+    }
+    return info, nil
 }
