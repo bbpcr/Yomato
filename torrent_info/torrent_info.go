@@ -1,9 +1,10 @@
 package torrent_info
 
 import (
-	"bencode"
 	"errors"
 	"fmt"
+
+	"github.com/bbcpr/Yomato/bencode"
 )
 
 type SingleFileInfo struct {

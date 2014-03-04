@@ -1,4 +1,4 @@
-.PHONY: test-bencode nicecode test
+.PHONY: all test-bencode nicecode test
 
 all: test
 
@@ -9,6 +9,6 @@ test: test-bencode
 
 test-bencode:
 	export GOPATH=$(PWD)
-	cp -R test_data src/bencode/test_data
-	go test bencode
-	rm -rf src/bencode/test_data
+	cp -R test_data bencode/test_data
+	go test ...bencode
+	rm -rf bencode/test_data

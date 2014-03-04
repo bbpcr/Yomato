@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bencode"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"torrent_info"
+
+	"github.com/bbcpr/Yomato/bencode"
+	"github.com/bbcpr/Yomato/torrent_info"
 )
 
 func main() {
