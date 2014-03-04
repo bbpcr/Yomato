@@ -1,5 +1,6 @@
 Yomato
 ======
+[![Build Status](https://travis-ci.org/bbpcr/Yomato.png)](https://travis-ci.org/bbpcr/Yomato)
 
 Yet One More App for TOrrents.
 
