@@ -1,6 +1,7 @@
 package torrent_info
 
 import (
+	"crypto/sha1"
 	"errors"
 	"fmt"
 
@@ -30,6 +31,7 @@ type TorrentInfo struct {
 	Comment          string
 	CreatedBy        string
 	Encoding         string
+	InfoHash         []byte
 }
 
 func (torrentInfo TorrentInfo) Description() string {
@@ -44,6 +46,7 @@ func (torrentInfo TorrentInfo) Description() string {
 			fmt.Sprintln("Piece Length :", torrentInfo.FileInformations.PieceLength) +
 			fmt.Sprintln("Private :", torrentInfo.FileInformations.Private) +
 			fmt.Sprintln("Simple Single file torrent? :", !torrentInfo.FileInformations.MultipleFiles) +
+			fmt.Sprintln("Info Hash :", string(torrentInfo.InfoHash)) +
 			fmt.Sprintln("File name / root name :", torrentInfo.FileInformations.RootPath) +
 			"\n"
 
@@ -105,6 +108,11 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 	}
 
 	dictionary := decoded.(*bencode.Dictionary)
+
+	// create the info hash from tracker communication
+	hash := sha1.New()
+	hash.Write(dictionary.Encode())
+	output.InfoHash = hash.Sum(nil)
 
 	for key, value := range dictionary.Values {
 		switch key.Value {

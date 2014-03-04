@@ -7,6 +7,7 @@ import (
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/torrent_info"
+	"github.com/bbpcr/Yomato/tracker"
 )
 
 func main() {
@@ -30,5 +31,12 @@ func main() {
 		panic(err)
 	}
 
+	tracker := tracker.New(*torrentInfo)
+	response, err := tracker.Start()
+	if err != nil {
+		panic(err)
+	}
+
 	fmt.Println(torrentInfo.Description())
+	fmt.Printf("Tracker response: %s\n", response.Dump())
 }
