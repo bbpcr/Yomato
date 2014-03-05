@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
-
 	"github.com/bbpcr/Yomato/bencode"
 )
 

@@ -38,10 +38,19 @@ func (tracker Tracker) Start() (bencode.Bencoder, error) {
 		if err != nil {
 			return bencode.Dictionary{}, err
 		}
-		return data, nil
+		
+		newData , err := GetPeers(data)
+		
+		if err != nil {
+			return bencode.Dictionary{}, err
+		}
+		
+		return newData, nil
 	}
 	return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", res.Status))
 }
+
+
 
 func New(info torrent_info.TorrentInfo) Tracker {
 	return Tracker{
