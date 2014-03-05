@@ -89,7 +89,6 @@ func (d Dictionary) Dump() string {
 func (d Dictionary) Encode() []byte {
 	var buffer bytes.Buffer
 
-
 	keys := []String{}
 
 	for key, _ := range d.Values {
