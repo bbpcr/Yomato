@@ -25,24 +25,28 @@ func (dowloader Downloader) Start() {
 		panic(err)
 	}
 	comm := make(chan peer.PeerCommunication)
-	responseDictionary, isDictionary := data.(*bencode.Dictionary)
+	responseDictionary, responseIsDictionary := data.(*bencode.Dictionary)
 
-	if !isDictionary {
+	if !responseIsDictionary {
 		return
 	}
 
-	peers, isList := responseDictionary.Values[bencode.String{"peers"}].(bencode.List)
+	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(bencode.List)
 
-	if !isList {
+	if !peersIsList {
 		return
 	}
 
 	for _, peerEntry := range peers.Values {
-		peerData := peerEntry.(bencode.Dictionary).Values
-		ip := peerData[bencode.String{"ip"}].(bencode.String).Value
-		port := peerData[bencode.String{"port"}].(bencode.Number).Value
-		newPeer := peer.New(&dowloader.TorrentInfo, dowloader.PeerId, ip, int(port))
-		newPeer.Handshake(comm)
+		peerData , peerDataIsDictionary := peerEntry.(bencode.Dictionary)
+		if peerDataIsDictionary {			
+			ip , ipIsString := peerData.Values[bencode.String{"ip"}].(bencode.String)
+			port , portIsNumber := peerData.Values[bencode.String{"port"}].(bencode.Number)
+			if (ipIsString && portIsNumber) {
+				newPeer := peer.New(&dowloader.TorrentInfo, dowloader.PeerId, ip.Value, int(port.Value))
+				newPeer.Handshake(comm)
+			}
+		}
 	}
 
 	numOk := 0
