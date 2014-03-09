@@ -26,7 +26,7 @@ type PeerCommunication struct {
 type Peer struct {
 	IP           string
 	Port         int
-	Conn         *net.Conn
+	Connection   *net.Conn
 	Protocol     string
 	Status       PeerStatus
 	TorrentInfo  *torrent_info.TorrentInfo
@@ -34,14 +34,34 @@ type Peer struct {
 	RemotePeerId string
 }
 
-func (p *Peer) connect(callback func(error)) {
+func (peer *Peer) GetInfo() string {
+	infoString := fmt.Sprintf("Remote IP : %s:%d", peer.IP, peer.Port)
+	infoString += fmt.Sprintln()
+	infoString += fmt.Sprintln("Remote peer ID : ", peer.RemotePeerId)
+	infoString += fmt.Sprintln("Remote peer ID length : ", len(peer.RemotePeerId))
+	infoString += fmt.Sprintln("Protocol : ", peer.Protocol)
+	switch peer.Status {
+	case Disconnected:
+		infoString += fmt.Sprintln("Status : Disconnected")
+	case Connected:
+		infoString += fmt.Sprintln("Status : Connected")
+	case PendingHandshake:
+		infoString += fmt.Sprintln("Status : Pending Handshake")
+	default:
+		infoString += fmt.Sprintln("Status : NONE")
+	}
+	infoString += fmt.Sprintln("Local peer ID : ", peer.LocalPeerId)
+	return infoString
+}
+
+func (peer *Peer) connect(callback func(error)) {
 	go (func() {
 		for _, protocol := range []string{"tcp", "udp"} {
-			conn, err := net.DialTimeout(protocol, fmt.Sprintf("%s:%d", p.IP, p.Port), 1*time.Second)
+			conn, err := net.DialTimeout(protocol, fmt.Sprintf("%s:%d", peer.IP, peer.Port), 1*time.Second)
 			if err != nil {
 				continue
 			}
-			p.Conn = &conn
+			peer.Connection = &conn
 			callback(nil)
 			return
 		}
@@ -49,51 +69,57 @@ func (p *Peer) connect(callback func(error)) {
 	})()
 }
 
-func (p *Peer) Handshake(comm chan PeerCommunication) {
-	if p.Status == Disconnected || p.Conn == nil {
-		p.connect(func(err error) {
+func (peer *Peer) Handshake(comm chan PeerCommunication) {
+	if peer.Status == Disconnected || peer.Connection == nil {
+		peer.connect(func(err error) {
 			if err == nil {
-				p.Status = PendingHandshake
-				p.Handshake(comm)
+				peer.Status = PendingHandshake
+				peer.Handshake(comm)
 			} else {
-				comm <- PeerCommunication{p, fmt.Sprintf("Error: %s", err)}
+				comm <- PeerCommunication{peer, fmt.Sprintf("Error: %s", err)}
 			}
 		})
 		return
-	} else if p.Status != PendingHandshake {
-		comm <- PeerCommunication{p, fmt.Sprintf("Error: Invalid status: %d", p.Status)}
+	} else if peer.Status != PendingHandshake {
+		comm <- PeerCommunication{peer, fmt.Sprintf("Error: Invalid status: %d", peer.Status)}
 		return
 	}
 
 	go (func() {
 		protocolString := "BitTorrent protocol"
-		handshake := make([]byte, 0, 68)
+		handshake := make([]byte, 0, 48+len(protocolString))
 		handshake = append(handshake, byte(19))
 		handshake = append(handshake, []byte(protocolString)...)
 		handshake = append(handshake, []byte{0, 0, 0, 0, 0, 0, 0, 0}...)
-		handshake = append(handshake, p.TorrentInfo.InfoHash...)
-		handshake = append(handshake, []byte(p.LocalPeerId)...)
+		handshake = append(handshake, peer.TorrentInfo.InfoHash...)
+		handshake = append(handshake, []byte(peer.LocalPeerId)...)
 
-		(*p.Conn).Write(handshake)
+		(*peer.Connection).Write(handshake)
 
-		resp := make([]byte, 68)
-		_, err := bufio.NewReader(*p.Conn).Read(resp)
+		resp := make([]byte, len(handshake))
+		_, err := bufio.NewReader(*peer.Connection).Read(resp)
 		if err != nil {
-			comm <- PeerCommunication{p, fmt.Sprintf("Error: %s", err)}
+		
+			peer.Status = Disconnected
+			peer.Connection = nil
+			comm <- PeerCommunication{peer, fmt.Sprintf("Error: %s", err)}
 			return
 		}
 
 		protocol := resp[1:20]
 		if string(protocol) != protocolString {
-			comm <- PeerCommunication{p, fmt.Sprintf("Wrong protocol: %s", string(protocol))}
+			peer.Status = Disconnected
+			peer.Connection = nil
+			comm <- PeerCommunication{peer, fmt.Sprintf("Wrong protocol: %s", string(protocol))}
 			return
 		}
 		remotePeerId := string(resp[48:])
 
-		p.Status = Connected
-		p.RemotePeerId = remotePeerId
+		peer.Protocol = string(protocol)
+		peer.Status = Connected
+		peer.RemotePeerId = remotePeerId
 
-		comm <- PeerCommunication{p, "OK"}
+		comm <- PeerCommunication{peer, "OK"}
 	})()
 }
 

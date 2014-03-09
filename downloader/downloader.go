@@ -19,20 +19,30 @@ type Downloader struct {
 	PeerId      string
 }
 
-func (d Downloader) Start() {
-	data, err := d.Tracker.Start()
+func (dowloader Downloader) Start() {
+	data, err := dowloader.Tracker.Start()
 	if err != nil {
 		panic(err)
 	}
-
 	comm := make(chan peer.PeerCommunication)
-	peers := data.(*bencode.Dictionary).Values[bencode.String{"peers"}].(bencode.List).Values
-	for _, peerEntry := range peers {
+	responseDictionary, isDictionary := data.(*bencode.Dictionary)
+
+	if !isDictionary {
+		return
+	}
+
+	peers, isList := responseDictionary.Values[bencode.String{"peers"}].(bencode.List)
+
+	if !isList {
+		return
+	}
+
+	for _, peerEntry := range peers.Values {
 		peerData := peerEntry.(bencode.Dictionary).Values
 		ip := peerData[bencode.String{"ip"}].(bencode.String).Value
 		port := peerData[bencode.String{"port"}].(bencode.Number).Value
-		p := peer.New(&d.TorrentInfo, d.PeerId, ip, int(port))
-		p.Handshake(comm)
+		newPeer := peer.New(&dowloader.TorrentInfo, dowloader.PeerId, ip, int(port))
+		newPeer.Handshake(comm)
 	}
 
 	numOk := 0
@@ -40,13 +50,13 @@ func (d Downloader) Start() {
 	for {
 		select {
 		case msg, _ := <-comm:
-			p := msg.Peer
+			peer := msg.Peer
 			status := msg.Message
 			totalNum++
 			if status == "OK" {
 				numOk++
 			}
-			fmt.Printf("\n-------------------------\nRemote IP: %s\nStatus: %s\nPeer ID: %s\nPeer ID length: %d\nPeers Ok: %d/%d\n-------------------------\n", p.IP, status, p.RemotePeerId, len(p.RemotePeerId), numOk, totalNum)
+			fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, totalNum)
 		}
 
 	}
