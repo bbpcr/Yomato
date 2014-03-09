@@ -107,6 +107,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		}
 
 		protocol := resp[1:20]
+		peer.Protocol = string(protocol)
 		if string(protocol) != protocolString {
 			peer.Status = Disconnected
 			peer.Connection = nil
@@ -115,7 +116,6 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		}
 		remotePeerId := string(resp[48:])
 
-		peer.Protocol = string(protocol)
 		peer.Status = Connected
 		peer.RemotePeerId = remotePeerId
 
