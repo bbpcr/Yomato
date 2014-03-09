@@ -57,7 +57,7 @@ func GetPeers(bdecoded bencode.Bencoder) (bencode.Bencoder, error) {
 		// This list should have as a bonus the peer id.
 	}
 
-	//We return the modified responseDictionary
+	// We return the modified responseDictionary
 
 	return responseDictionary, nil
 }
