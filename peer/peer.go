@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"time"
-
+	"bytes"
+	"encoding/binary"
+	
 	"github.com/bbpcr/Yomato/torrent_info"
 )
 
@@ -20,6 +22,7 @@ const (
 
 type PeerCommunication struct {
 	Peer    *Peer
+	BytesReceived []byte
 	Message string
 }
 
@@ -69,6 +72,32 @@ func (peer *Peer) connect(callback func(error)) {
 	})()
 }
 
+func (peer *Peer) RequestPiece(comm chan PeerCommunication , index int32 , begin int32, length int32) {
+	if peer.Status == Connected && peer.Connection != nil {
+		go (func() {
+			buf := new(bytes.Buffer)
+			lens := []byte{ 0, 0, 0, 13 }
+			binary.Write(buf, binary.LittleEndian, lens)
+			var id int32 = 6
+			binary.Write(buf, binary.LittleEndian, id)
+			binary.Write(buf, binary.LittleEndian, index)
+			binary.Write(buf, binary.LittleEndian, begin)
+			binary.Write(buf, binary.LittleEndian, length)
+			(*peer.Connection).Write(buf.Bytes())
+			responseBytes := make([]byte, length)
+			bytesRead, err := bufio.NewReader(*peer.Connection).Read(responseBytes)
+			if err != nil {
+				comm <- PeerCommunication{peer, nil , fmt.Sprintf("Error at request: %s", err)}
+			} else {
+				comm <- PeerCommunication{peer, responseBytes[0:bytesRead] , "Request OK" }
+			}
+			return
+		})()
+	} else {
+		comm <- PeerCommunication{peer, nil , "Error at request: Peer not connected"}
+	}
+}
+
 func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	if peer.Status == Disconnected || peer.Connection == nil {
 		peer.connect(func(err error) {
@@ -76,12 +105,12 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 				peer.Status = PendingHandshake
 				peer.Handshake(comm)
 			} else {
-				comm <- PeerCommunication{peer, fmt.Sprintf("Error: %s", err)}
+				comm <- PeerCommunication{peer, nil , fmt.Sprintf("Error at handshake: %s", err)}
 			}
 		})
 		return
 	} else if peer.Status != PendingHandshake {
-		comm <- PeerCommunication{peer, fmt.Sprintf("Error: Invalid status: %d", peer.Status)}
+		comm <- PeerCommunication{peer, nil , fmt.Sprintf("Error at handshake: Invalid status: %d", peer.Status)}
 		return
 	}
 
@@ -102,7 +131,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		
 			peer.Status = Disconnected
 			peer.Connection = nil
-			comm <- PeerCommunication{peer, fmt.Sprintf("Error: %s", err)}
+			comm <- PeerCommunication{peer, nil , fmt.Sprintf("Error at handshake: %s", err)}
 			return
 		}
 
@@ -111,7 +140,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		if string(protocol) != protocolString {
 			peer.Status = Disconnected
 			peer.Connection = nil
-			comm <- PeerCommunication{peer, fmt.Sprintf("Wrong protocol: %s", string(protocol))}
+			comm <- PeerCommunication{peer, nil , fmt.Sprintf("Error at handshake: Wrong protocol %s", string(protocol))}
 			return
 		}
 		remotePeerId := string(resp[48:])
@@ -119,7 +148,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		peer.Status = Connected
 		peer.RemotePeerId = remotePeerId
 
-		comm <- PeerCommunication{peer, "OK"}
+		comm <- PeerCommunication{peer, resp , "Handshake OK"}
 	})()
 }
 
