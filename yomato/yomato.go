@@ -17,7 +17,7 @@ func main() {
 	path := os.Args[1]
 
 	download := downloader.New(path)
+	fmt.Println(download.TorrentInfo.Description())
 	download.Start()
 	time.Sleep(10 * time.Second)
-	// fmt.Println(download.TorrentInfo.Description())
 }

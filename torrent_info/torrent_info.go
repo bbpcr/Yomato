@@ -42,7 +42,7 @@ func (torrentInfo TorrentInfo) Description() string {
 			fmt.Sprintln("Comment :", torrentInfo.Comment) +
 			fmt.Sprintln("Created by :", torrentInfo.CreatedBy) +
 			fmt.Sprintln("Encoding :", torrentInfo.Encoding) +
-			fmt.Sprintln("Pieces : " , int64(len(torrentInfo.FileInformations.Pieces)) / torrentInfo.FileInformations.PieceLength) + 
+			fmt.Sprintln("Pieces : ", int64(len(torrentInfo.FileInformations.Pieces))/20) +
 			fmt.Sprintln("Piece Length :", torrentInfo.FileInformations.PieceLength) +
 			fmt.Sprintln("Private :", torrentInfo.FileInformations.Private) +
 			fmt.Sprintln("Simple Single file torrent? :", !torrentInfo.FileInformations.MultipleFiles) +

@@ -21,7 +21,11 @@ type Downloader struct {
 }
 
 func (downloader Downloader) Start() {
-	data, err := downloader.Tracker.RequestPeers(0 , 0 , downloader.TorrentInfo.FileInformations.Files[0].Length)
+
+	// Request the peers , from the tracker
+	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size
+	data, err := downloader.Tracker.RequestPeers(0, 0, downloader.TorrentInfo.FileInformations.Files[0].Length)
+
 	if err != nil {
 		panic(err)
 	}
@@ -32,18 +36,24 @@ func (downloader Downloader) Start() {
 		return
 	}
 
-	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(bencode.List)
+	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
 
 	if !peersIsList {
 		return
 	}
 
+	// At this point we have the peers as a list.
+
 	for _, peerEntry := range peers.Values {
-		peerData, peerDataIsDictionary := peerEntry.(bencode.Dictionary)
+		peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
 		if peerDataIsDictionary {
-			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(bencode.String)
-			port, portIsNumber := peerData.Values[bencode.String{"port"}].(bencode.Number)
+			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
+			port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
 			if ipIsString && portIsNumber {
+
+				// We try to make a handshake with the peer.
+				// Results are sent on the channel comm.
+
 				newPeer := peer.New(&downloader.TorrentInfo, downloader.PeerId, ip.Value, int(port.Value))
 				newPeer.Handshake(comm)
 			}
@@ -51,25 +61,25 @@ func (downloader Downloader) Start() {
 	}
 
 	numOk := 0
-	totalNum := 0
+
+	// At this point , we have an infinite loop.
+	// We wait for the message to come from another goroutine , and we parse it.
+
 	for {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			status := msg.Message
-			totalNum++
 			if status == "Handshake OK" {
 				numOk++
-				fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, totalNum)
-				peer.RequestPiece(comm , 0 , 0 , 1 << 15)
+				fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, len(peers.Values))
+				peer.RequestPiece(comm, 0, 0, downloader.TorrentInfo.FileInformations.PieceLength)
 			} else if status == "Request OK" {
 				fmt.Println("Received from ", peer.RemotePeerId, msg.BytesReceived)
-			} else if strings.Contains(status , "Error at request") {
-				peer.RequestPiece(comm , 0 , 0 , 1 << 15)
+			} else if strings.Contains(status, "Error at request") {
+
 			}
-
 		}
-
 	}
 }
 
