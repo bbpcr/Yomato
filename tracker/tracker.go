@@ -17,16 +17,20 @@ type Tracker struct {
 	Port        int
 }
 
-func (tracker Tracker) RequestPeers(bytesUploaded , bytesDownloaded , bytesLeft int64) (bencode.Bencoder, error) {
+func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) (bencode.Bencoder, error) {
 	peerId := tracker.PeerId
+
+	// We create the URL like this :
+	// announcer?peer_id= & info_hash= & port= & uploaded= & downloaded= & left= & event=
+	// The uploaded , downloaded and left should always be , but are not necesary
 
 	qs := url.Values{}
 	qs.Add("peer_id", peerId)
 	qs.Add("info_hash", string(tracker.TorrentInfo.InfoHash))
 	qs.Add("port", fmt.Sprintf("%d", tracker.Port))
-	qs.Add("uploaded",fmt.Sprintf("%d",bytesUploaded))
-	qs.Add("downloaded",fmt.Sprintf("%d",bytesDownloaded))
-	qs.Add("left",fmt.Sprintf("%d",bytesLeft))
+	qs.Add("uploaded", fmt.Sprintf("%d", bytesUploaded))
+	qs.Add("downloaded", fmt.Sprintf("%d", bytesDownloaded))
+	qs.Add("left", fmt.Sprintf("%d", bytesLeft))
 	qs.Add("event", "started")
 
 	res, err := http.Get(tracker.TorrentInfo.AnnounceUrl + "?" + qs.Encode())
@@ -35,6 +39,7 @@ func (tracker Tracker) RequestPeers(bytesUploaded , bytesDownloaded , bytesLeft 
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
+
 	if err != nil {
 		return bencode.Dictionary{}, err
 	}
