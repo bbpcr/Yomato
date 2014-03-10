@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
+	"strings"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/local_server"
@@ -19,8 +20,8 @@ type Downloader struct {
 	PeerId      string
 }
 
-func (dowloader Downloader) Start() {
-	data, err := dowloader.Tracker.Start()
+func (downloader Downloader) Start() {
+	data, err := downloader.Tracker.RequestPeers(0 , 0 , downloader.TorrentInfo.FileInformations.Files[0].Length)
 	if err != nil {
 		panic(err)
 	}
@@ -38,12 +39,12 @@ func (dowloader Downloader) Start() {
 	}
 
 	for _, peerEntry := range peers.Values {
-		peerData , peerDataIsDictionary := peerEntry.(bencode.Dictionary)
-		if peerDataIsDictionary {			
-			ip , ipIsString := peerData.Values[bencode.String{"ip"}].(bencode.String)
-			port , portIsNumber := peerData.Values[bencode.String{"port"}].(bencode.Number)
-			if (ipIsString && portIsNumber) {
-				newPeer := peer.New(&dowloader.TorrentInfo, dowloader.PeerId, ip.Value, int(port.Value))
+		peerData, peerDataIsDictionary := peerEntry.(bencode.Dictionary)
+		if peerDataIsDictionary {
+			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(bencode.String)
+			port, portIsNumber := peerData.Values[bencode.String{"port"}].(bencode.Number)
+			if ipIsString && portIsNumber {
+				newPeer := peer.New(&downloader.TorrentInfo, downloader.PeerId, ip.Value, int(port.Value))
 				newPeer.Handshake(comm)
 			}
 		}
@@ -57,10 +58,16 @@ func (dowloader Downloader) Start() {
 			peer := msg.Peer
 			status := msg.Message
 			totalNum++
-			if status == "OK" {
+			if status == "Handshake OK" {
 				numOk++
+				fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, totalNum)
+				peer.RequestPiece(comm , 0 , 0 , 1 << 15)
+			} else if status == "Request OK" {
+				fmt.Println("Received from ", peer.RemotePeerId, msg.BytesReceived)
+			} else if strings.Contains(status , "Error at request") {
+				peer.RequestPiece(comm , 0 , 0 , 1 << 15)
 			}
-			fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, totalNum)
+
 		}
 
 	}
