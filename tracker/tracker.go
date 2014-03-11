@@ -17,6 +17,38 @@ type Tracker struct {
 	Port        int
 }
 
+func readPeersFromAnnouncer(AnnouncerUrl string) (bencode.Bencoder, error) {
+
+	response, err := http.Get(AnnouncerUrl)
+
+	if err != nil {
+		return bencode.Dictionary{}, err
+	}
+
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return bencode.Dictionary{}, err
+	}
+
+	response.Body.Close()
+
+	if response.StatusCode == 200 {
+		data, _, err := bencode.Parse(body)
+		if err != nil {
+			return bencode.Dictionary{}, err
+		}
+
+		newData, err := GetPeers(data)
+
+		if err != nil {
+			return bencode.Dictionary{}, err
+		}
+
+		return newData, nil
+	}
+	return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
+}
+
 func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) (bencode.Bencoder, error) {
 	peerId := tracker.PeerId
 
@@ -33,31 +65,19 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 	qs.Add("left", fmt.Sprintf("%d", bytesLeft))
 	qs.Add("event", "started")
 
-	res, err := http.Get(tracker.TorrentInfo.AnnounceUrl + "?" + qs.Encode())
-	if err != nil {
-		return bencode.Dictionary{}, err
+	data, err := readPeersFromAnnouncer(tracker.TorrentInfo.AnnounceUrl + "?" + qs.Encode())
+	if err == nil {
+		return data, nil
 	}
 
-	body, err := ioutil.ReadAll(res.Body)
-
-	if err != nil {
-		return bencode.Dictionary{}, err
-	}
-	if res.StatusCode == 200 {
-		data, _, err := bencode.Parse(body)
-		if err != nil {
-			return bencode.Dictionary{}, err
+	for _, anotherAnnounceUrl := range tracker.TorrentInfo.AnnounceList {
+		data, err := readPeersFromAnnouncer(anotherAnnounceUrl + "?" + qs.Encode())
+		if err == nil {
+			return data, nil
 		}
-
-		newData, err := GetPeers(data)
-
-		if err != nil {
-			return bencode.Dictionary{}, err
-		}
-
-		return newData, nil
 	}
-	return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", res.Status))
+
+	return bencode.Dictionary{}, errors.New("No announcer responded correctly")
 }
 
 func New(info *torrent_info.TorrentInfo, port int, peerId string) Tracker {
