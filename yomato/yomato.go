@@ -18,6 +18,6 @@ func main() {
 
 	download := downloader.New(path)
 	fmt.Println(download.TorrentInfo.Description())
-	download.Start()
+	download.StartDownloading()
 	time.Sleep(10 * time.Second)
 }
