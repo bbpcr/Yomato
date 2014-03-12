@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
-	"time"
+	//"time"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/local_server"
@@ -49,26 +49,50 @@ func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.Peer
 		if peerDataIsDictionary {
 			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
 			port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
-			if ipIsString && portIsNumber {
+			peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
+			if ipIsString && portIsNumber && peerIdIsString {
 
 				// We try to make a handshake with the peer.
 				// Results are sent on the channel comm.
 
 				newPeer := peer.New(&downloader.TorrentInfo, downloader.PeerId, ip.Value, int(port.Value))
+				newPeer.RemotePeerId = peerId.Value
 				newPeer.Handshake(comm)
-
-				// We sleep a bit , because we dont want to overload the CPU
-				time.Sleep(50 * time.Millisecond)
 			}
 		}
 	}
 	return len(peers.Values), nil
 }
 
+func (downloader Downloader) SendInterestedToPeers(peersList []peer.Peer) {
+
+	// We send and interested message to the peers
+
+	comm := make(chan peer.PeerCommunication)
+
+	for index, _ := range peersList {
+		peersList[index].SendInterested(comm)
+	}
+
+	// We wait for all of them to finish sending
+
+	numTotal := 0
+	for numTotal < len(peersList) {
+		select {
+		case msg, _ := <-comm:
+			numTotal++
+			status := msg.Message
+			peer := msg.Peer
+			fmt.Println("Sent interested to ", peer.RemotePeerId, " and received ", status)
+		}
+	}
+	return
+}
+
 func (downloader Downloader) StartDownloading() {
 
 	comm := make(chan peer.PeerCommunication)
-	_, err := downloader.RequestPeersAndRequestHandshake(comm, 0, 0, 10000)
+	peersCount, err := downloader.RequestPeersAndRequestHandshake(comm, 0, 0, 10000)
 
 	if err != nil {
 		panic(err)
@@ -77,10 +101,12 @@ func (downloader Downloader) StartDownloading() {
 	numTotal := 0
 	numOk := 0
 
-	// At this point , we have an infinite loop.
+	// At this point , we have loop where we wait for all the peers to complete their handshake or not.
 	// We wait for the message to come from another goroutine , and we parse it.
 
-	for {
+	var goodPeers []peer.Peer
+
+	for numTotal < peersCount {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
@@ -88,12 +114,39 @@ func (downloader Downloader) StartDownloading() {
 			numTotal++
 			if status == "Handshake OK" {
 				numOk++
-				fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, numTotal)
+				goodPeers = append(goodPeers, *peer)
 			} else if strings.Contains(status, "Error at handshake") {
 
 			}
+			fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, numTotal)
 		}
 	}
+
+	// We send an interested message to all peers
+
+	downloader.SendInterestedToPeers(goodPeers)
+
+	// We request a piece just to check if it receives
+
+	for index, _ := range goodPeers {
+		goodPeers[index].RequestPiece(comm, 0, 0, 1<<15)
+	}
+
+	numTotal = 0
+	for numTotal < len(goodPeers) {
+		select {
+		case msg, _ := <-comm:
+			peer := msg.Peer
+			status := msg.Message
+			numTotal++
+			if status == "Request OK" {
+				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", msg.BytesReceived)
+			} else {
+				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", status)
+			}
+		}
+	}
+	return
 }
 
 func New(torrent_path string) *Downloader {

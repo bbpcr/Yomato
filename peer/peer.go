@@ -1,7 +1,6 @@
 package peer
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -72,6 +71,51 @@ func (peer *Peer) connect(callback func(error)) {
 	})()
 }
 
+func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
+	if peer.Status == Connected && peer.Connection != nil {
+		go (func() {
+			buf := []byte{0, 0, 0, 1, 1}
+
+			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			bytesWritten, err := (*peer.Connection).Write(buf)
+
+			if err != nil || bytesWritten < len(buf) {
+
+				if err != nil {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", err)}
+				} else {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", "Insufficient bytes written")}
+				}
+				return
+			}
+			comm <- PeerCommunication{peer, nil, "Unchoke OK"}
+			return
+		})()
+	}
+}
+
+func (peer *Peer) SendInterested(comm chan PeerCommunication) {
+	if peer.Status == Connected && peer.Connection != nil {
+		go (func() {
+			buf := []byte{0, 0, 0, 1, 2}
+			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			bytesWritten, err := (*peer.Connection).Write(buf)
+
+			if err != nil || bytesWritten < len(buf) {
+
+				if err != nil {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err)}
+				} else {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Insufficient bytes written")}
+				}
+				return
+			}
+			comm <- PeerCommunication{peer, nil, "Interested OK"}
+			return
+		})()
+	}
+}
+
 func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int64, begin int64, length int64) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
@@ -83,9 +127,23 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int64, begin i
 			binary.Write(buf, binary.LittleEndian, index)
 			binary.Write(buf, binary.LittleEndian, begin)
 			binary.Write(buf, binary.LittleEndian, length)
-			(*peer.Connection).Write(buf.Bytes())
+
+			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			bytesWritten, err := (*peer.Connection).Write(buf.Bytes())
+
+			if err != nil || bytesWritten < len(buf.Bytes()) {
+
+				if err != nil {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
+				} else {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", "Insufficient bytes written")}
+				}
+				return
+			}
+
 			responseBytes := make([]byte, length)
-			bytesRead, err := bufio.NewReader(*peer.Connection).Read(responseBytes)
+			bytesRead, err := (*peer.Connection).Read(responseBytes)
+
 			if err != nil {
 				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
 			} else {
@@ -98,6 +156,16 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int64, begin i
 	}
 }
 
+func (peer *Peer) Disconnect() {
+
+	peer.Status = Disconnected
+	if peer.Connection != nil {
+		(*peer.Connection).Close()
+	}
+	peer.Connection = nil
+	return
+}
+
 func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	if peer.Status == Disconnected || peer.Connection == nil {
 		peer.connect(func(err error) {
@@ -105,6 +173,8 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 				peer.Status = PendingHandshake
 				peer.Handshake(comm)
 			} else {
+
+				peer.Disconnect()
 				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: %s", err)}
 			}
 		})
@@ -123,26 +193,45 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		handshake = append(handshake, peer.TorrentInfo.InfoHash...)
 		handshake = append(handshake, []byte(peer.LocalPeerId)...)
 
-		(*peer.Connection).Write(handshake)
+		(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+		bytesWritten, err := (*peer.Connection).Write(handshake)
+
+		if err != nil || bytesWritten < len(handshake) {
+
+			if err != nil {
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", err)}
+			} else {
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", "Insufficient bytes written")}
+			}
+			peer.Disconnect()
+
+			return
+		}
 
 		resp := make([]byte, len(handshake))
-		_, err := bufio.NewReader(*peer.Connection).Read(resp)
-		if err != nil {
+		bytesRead, err := (*peer.Connection).Read(resp)
 
-			peer.Status = Disconnected
-			peer.Connection = nil
-			comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: %s", err)}
+		if err != nil || bytesRead < len(resp) {
+
+			peer.Disconnect()
+			if err != nil {
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", err)}
+			} else {
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", "Insufficient bytes read")}
+			}
+
 			return
 		}
 
 		protocol := resp[1:20]
 		peer.Protocol = string(protocol)
 		if string(protocol) != protocolString {
-			peer.Status = Disconnected
-			peer.Connection = nil
+
+			peer.Disconnect()
 			comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: Wrong protocol %s", string(protocol))}
 			return
 		}
+
 		remotePeerId := string(resp[48:])
 
 		peer.Status = Connected
