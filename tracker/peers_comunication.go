@@ -45,6 +45,7 @@ func GetPeers(bdecoded bencode.Bencoder) (bencode.Bencoder, error) {
 			ip.Value = fmt.Sprintf("%d.%d.%d.%d", byteArray[i], byteArray[i+1], byteArray[i+2], byteArray[i+3])
 
 			peerId := new(bencode.String)
+			peerId.Value = ""
 
 			smallDictionary.Values[bencode.String{"port"}] = numberPort
 			smallDictionary.Values[bencode.String{"ip"}] = ip
