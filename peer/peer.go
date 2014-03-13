@@ -1,8 +1,6 @@
 package peer
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -116,22 +114,30 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 	}
 }
 
-func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int64, begin int64, length int64) {
+func intToBytes(value int) []byte {
+
+	bytes := []byte{0, 0, 0, 0}
+
+	bytes[0] = byte((value >> 24) & 0xFF)
+	bytes[1] = byte((value >> 16) & 0xFF)
+	bytes[2] = byte((value >> 8) & 0xFF)
+	bytes[3] = byte(value & 0xFF)
+
+	return bytes
+}
+
+func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int, length int) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
-			buf := new(bytes.Buffer)
-			lens := []byte{0, 0, 0, 13}
-			binary.Write(buf, binary.LittleEndian, lens)
-			var id int32 = 6
-			binary.Write(buf, binary.LittleEndian, id)
-			binary.Write(buf, binary.LittleEndian, index)
-			binary.Write(buf, binary.LittleEndian, begin)
-			binary.Write(buf, binary.LittleEndian, length)
+			bytesToBeWritten := []byte{0, 0, 0, 13, 6}
+			bytesToBeWritten = append(bytesToBeWritten, intToBytes(index)...)
+			bytesToBeWritten = append(bytesToBeWritten, intToBytes(begin)...)
+			bytesToBeWritten = append(bytesToBeWritten, intToBytes(length)...)
 
 			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
-			bytesWritten, err := (*peer.Connection).Write(buf.Bytes())
+			bytesWritten, err := (*peer.Connection).Write(bytesToBeWritten)
 
-			if err != nil || bytesWritten < len(buf.Bytes()) {
+			if err != nil || bytesWritten < len(bytesToBeWritten) {
 
 				if err != nil {
 					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
