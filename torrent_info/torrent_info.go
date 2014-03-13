@@ -18,7 +18,7 @@ type InfoDictionary struct {
 	Files         []SingleFileInfo
 	MultipleFiles bool
 	PieceLength   int64
-	Pieces        string
+	Pieces        []byte
 	Private       int64
 }
 
@@ -122,7 +122,7 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 			}
 		case "pieces":
 			if data, isString := value.(*bencode.String); isString {
-				output.FileInformations.Pieces = data.Value
+				output.FileInformations.Pieces = []byte(data.Value)
 			}
 		case "private":
 			if data, isNumber := value.(*bencode.Number); isNumber {

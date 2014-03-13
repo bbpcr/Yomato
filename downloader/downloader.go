@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
-	//"time"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/local_server"
@@ -64,11 +63,30 @@ func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.Peer
 	return len(peers.Values), nil
 }
 
-func (downloader Downloader) SendInterestedToPeers(peersList []peer.Peer) {
+func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.Peer) {
 
-	// We send and interested message to the peers
+	// We send an unchoke message to the peers
 
 	comm := make(chan peer.PeerCommunication)
+
+	for index, _ := range peersList {
+		peersList[index].SendUnchoke(comm)
+	}
+
+	// We wait for all of them to finish sending
+
+	numTotal := 0
+	for numTotal < len(peersList) {
+		select {
+		case msg, _ := <-comm:
+			numTotal++
+			status := msg.Message
+			peer := msg.Peer
+			fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received ", status)
+		}
+	}
+
+	// We send an interested message to the peers
 
 	for index, _ := range peersList {
 		peersList[index].SendInterested(comm)
@@ -76,7 +94,7 @@ func (downloader Downloader) SendInterestedToPeers(peersList []peer.Peer) {
 
 	// We wait for all of them to finish sending
 
-	numTotal := 0
+	numTotal = 0
 	for numTotal < len(peersList) {
 		select {
 		case msg, _ := <-comm:
@@ -124,12 +142,12 @@ func (downloader Downloader) StartDownloading() {
 
 	// We send an interested message to all peers
 
-	downloader.SendInterestedToPeers(goodPeers)
+	downloader.SendInterestedAndUnchokedToPeers(goodPeers)
 
 	// We request a piece just to check if it receives
 
 	for index, _ := range goodPeers {
-		goodPeers[index].RequestPiece(comm, 0, 0, 1<<15)
+		goodPeers[index].RequestPiece(comm, index, 0, 1<<14)
 	}
 
 	numTotal = 0
@@ -146,6 +164,13 @@ func (downloader Downloader) StartDownloading() {
 			}
 		}
 	}
+
+	// We disconnect the peers so they dont remain connected after use
+
+	for index, _ := range goodPeers {
+		goodPeers[index].Disconnect()
+	}
+
 	return
 }
 

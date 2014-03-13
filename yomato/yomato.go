@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/bbpcr/Yomato/downloader"
 )
@@ -19,5 +18,4 @@ func main() {
 	download := downloader.New(path)
 	fmt.Println(download.TorrentInfo.Description())
 	download.StartDownloading()
-	time.Sleep(10 * time.Second)
 }
