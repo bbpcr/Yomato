@@ -12,7 +12,6 @@ Yet One More App for TOrrents.
 Build instructions
 ==================
 
-cd Yomato
 make yomato
 
 Testing
