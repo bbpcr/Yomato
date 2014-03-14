@@ -12,9 +12,13 @@ Yet One More App for TOrrents.
 Build instructions
 ==================
 
-The easiest way is to use the `gd` tool -- https://code.google.com/p/godag/wiki/Install
+cd Yomato
+make yomato
 
-```bash
-$ gd -o main
-$ ./main
-```
+Testing
+=======
+make test
+
+Usage
+=====
+yomato [torrent-file.torrent]
