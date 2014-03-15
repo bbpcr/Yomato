@@ -24,15 +24,29 @@ type PeerCommunication struct {
 }
 
 type Peer struct {
-	IP           string
-	Port         int
-	Connection   *net.Conn
-	Protocol     string
-	Status       PeerStatus
-	TorrentInfo  *torrent_info.TorrentInfo
-	LocalPeerId  string
-	RemotePeerId string
+	IP             string
+	Port           int
+	Connection     *net.Conn
+	Protocol       string
+	Status         PeerStatus
+	TorrentInfo    *torrent_info.TorrentInfo
+	LocalPeerId    string
+	RemotePeerId   string
+	ExistingPieces []byte
 }
+
+const (
+	CHOKE          = 0
+	UNCHOKE        = 1
+	INTERESTED     = 2
+	NOT_INTERESTED = 3
+	HAVE           = 4
+	BITFIELD       = 5
+	REQUEST        = 6
+	PIECE          = 7
+	CANCEL         = 8
+	PORT           = 9
+)
 
 func (peer *Peer) GetInfo() string {
 	infoString := fmt.Sprintf("Remote IP : %s:%d", peer.IP, peer.Port)
@@ -69,6 +83,80 @@ func (peer *Peer) connect(callback func(error)) {
 	})()
 }
 
+func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
+
+	//First we read the first 5 bytes;
+	(*peer.Connection).SetDeadline(time.Now().Add(timeout))
+	readBuffer := []byte{0, 0, 0, 0, 0}
+	bytesRead, err := (*peer.Connection).Read(readBuffer)
+
+	if err != nil || bytesRead < len(readBuffer) {
+		if err != nil {
+			return -1, nil, err
+		} else {
+			return -1, nil, errors.New("Insufficient readed")
+		}
+	}
+
+	// Then we convert the first 4 bytes into length , 5-th byte into id , and we read the rest of the data
+
+	length := bytesToInt(readBuffer[0:4])
+	id := int(readBuffer[4])
+
+	var writeBuffer []byte
+	remainingBytes := length - 1
+	const BUFFER_SIZE = 1024 * 100 // 100Kb
+
+	for remainingBytes > 0 {
+
+		var newBuffer []byte
+		if BUFFER_SIZE < remainingBytes {
+			newBuffer = make([]byte, BUFFER_SIZE)
+		} else {
+			newBuffer = make([]byte, remainingBytes)
+		}
+
+		bytesRead, err = (*peer.Connection).Read(newBuffer)
+		if err != nil {
+			return -1, nil, err
+		}
+		writeBuffer = append(writeBuffer, newBuffer[0:bytesRead]...)
+		remainingBytes -= bytesRead
+	}
+	return id, writeBuffer, nil
+}
+
+func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
+	if peer.Status == Connected && peer.Connection != nil {
+
+		// We either receive a 'bitfield' or a 'have' message.
+		go (func() {
+
+			bitsetInfo := make([]byte, (peer.TorrentInfo.FileInformations.PieceCount/8)+1)
+
+			for true {
+				id, data, err := peer.TryReadMessage(1 * time.Second)
+				if err != nil {
+					break
+				}
+
+				if id == BITFIELD {
+					for index, _ := range data {
+						bitsetInfo[index] |= data[index]
+					}
+				} else if id == HAVE {
+					pieceIndex := bytesToInt(data)
+					bitsetPosition := pieceIndex / 8
+					bytePosition := pieceIndex - (bitsetPosition * 8)
+					bitsetInfo[bitsetPosition] |= (1 << (7 - byte(bytePosition)))
+				}
+			}
+			comm <- PeerCommunication{peer, bitsetInfo, "Contents OK"}
+			return
+		})()
+	}
+}
+
 func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
@@ -86,7 +174,7 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 				}
 				return
 			}
-			comm <- PeerCommunication{peer, nil, "Unchoke OK"}
+			comm <- PeerCommunication{peer, nil, "Unchoked OK"}
 			return
 		})()
 	}
@@ -100,7 +188,6 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 			bytesWritten, err := (*peer.Connection).Write(buf)
 
 			if err != nil || bytesWritten < len(buf) {
-
 				if err != nil {
 					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err)}
 				} else {
@@ -108,7 +195,19 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 				}
 				return
 			}
-			comm <- PeerCommunication{peer, nil, "Interested OK"}
+
+			id, data, err := peer.TryReadMessage(6 * time.Second)
+
+			if err != nil || id != UNCHOKE {
+				if err != nil {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err)}
+				} else {
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Didn't receive unchoked")}
+				}
+				return
+			}
+			comm <- PeerCommunication{peer, data, "Interested OK"}
+
 			return
 		})()
 	}
@@ -124,6 +223,14 @@ func intToBytes(value int) []byte {
 	bytes[3] = byte(value & 0xFF)
 
 	return bytes
+}
+
+func bytesToInt(bytes []byte) int {
+	var number int = 0
+	for _, b := range bytes {
+		number = (number << 8) + int(b)
+	}
+	return number
 }
 
 func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int, length int) {
@@ -147,13 +254,12 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 				return
 			}
 
-			responseBytes := make([]byte, length)
-			bytesRead, err := (*peer.Connection).Read(responseBytes)
+			id, data, err := peer.TryReadMessage(6 * time.Second)
 
-			if err != nil {
+			if err != nil || id != PIECE {
 				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
 			} else {
-				comm <- PeerCommunication{peer, responseBytes[0:bytesRead], "Request OK"}
+				comm <- PeerCommunication{peer, data, "Request OK"}
 			}
 			return
 		})()
@@ -242,7 +348,6 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 
 		peer.Status = Connected
 		peer.RemotePeerId = remotePeerId
-
 		comm <- PeerCommunication{peer, resp, "Handshake OK"}
 	})()
 }

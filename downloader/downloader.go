@@ -82,7 +82,7 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 			numTotal++
 			status := msg.Message
 			peer := msg.Peer
-			fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received ", status)
+			fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received bytes : ", msg.BytesReceived, " with status : ", status)
 		}
 	}
 
@@ -105,6 +105,32 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 		}
 	}
 	return
+}
+
+func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer {
+	comm := make(chan peer.PeerCommunication)
+
+	for index, _ := range peersList {
+		peersList[index].WaitForContents(comm)
+	}
+
+	// We wait for all of them to finish sending
+
+	var newPeersList []peer.Peer
+
+	numTotal := 0
+	for numTotal < len(peersList) {
+		select {
+		case msg, _ := <-comm:
+			numTotal++
+			peer := msg.Peer
+			peer.ExistingPieces = msg.BytesReceived
+			newPeersList = append(newPeersList, *peer)
+			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", msg.BytesReceived, " with status : ", msg.Message)
+		}
+	}
+	fmt.Println("All peers got their contents!")
+	return newPeersList
 }
 
 func (downloader Downloader) StartDownloading() {
@@ -140,14 +166,15 @@ func (downloader Downloader) StartDownloading() {
 		}
 	}
 
+	// We wait for peers to tell us , what pieces they have.
+	// This is mandatory , since peers always send this first.
+	goodPeers = downloader.GetFileContents(goodPeers)
 	// We send an interested message to all peers
-
 	downloader.SendInterestedAndUnchokedToPeers(goodPeers)
-
 	// We request a piece just to check if it receives
 
 	for index, _ := range goodPeers {
-		goodPeers[index].RequestPiece(comm, index, 0, 1<<14)
+		goodPeers[index].RequestPiece(comm, 100, 0, 1<<8)
 	}
 
 	numTotal = 0
