@@ -18,6 +18,7 @@ type InfoDictionary struct {
 	Files         []SingleFileInfo
 	MultipleFiles bool
 	PieceLength   int64
+	PieceCount    int64
 	Pieces        []byte
 	Private       int64
 }
@@ -42,7 +43,7 @@ func (torrentInfo TorrentInfo) Description() string {
 			fmt.Sprintln("Comment :", torrentInfo.Comment) +
 			fmt.Sprintln("Created by :", torrentInfo.CreatedBy) +
 			fmt.Sprintln("Encoding :", torrentInfo.Encoding) +
-			fmt.Sprintln("Pieces : ", int64(len(torrentInfo.FileInformations.Pieces))/20) +
+			fmt.Sprintln("Pieces : ", torrentInfo.FileInformations.PieceCount) +
 			fmt.Sprintln("Piece Length :", torrentInfo.FileInformations.PieceLength) +
 			fmt.Sprintln("Private :", torrentInfo.FileInformations.Private) +
 			fmt.Sprintln("Simple Single file torrent? :", !torrentInfo.FileInformations.MultipleFiles) +
@@ -123,6 +124,7 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 		case "pieces":
 			if data, isString := value.(*bencode.String); isString {
 				output.FileInformations.Pieces = []byte(data.Value)
+				output.FileInformations.PieceCount = int64(len(output.FileInformations.Pieces)) / 20
 			}
 		case "private":
 			if data, isNumber := value.(*bencode.Number); isNumber {
