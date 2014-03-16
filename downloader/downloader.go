@@ -75,11 +75,9 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 
 	// We wait for all of them to finish sending
 
-	numTotal := 0
-	for numTotal < len(peersList) {
+	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
-			numTotal++
 			status := msg.Message
 			peer := msg.Peer
 			fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received bytes : ", msg.BytesReceived, " with status : ", status)
@@ -94,11 +92,9 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 
 	// We wait for all of them to finish sending
 
-	numTotal = 0
-	for numTotal < len(peersList) {
+	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
-			numTotal++
 			status := msg.Message
 			peer := msg.Peer
 			fmt.Println("Sent interested to ", peer.RemotePeerId, " and received ", status)
@@ -118,18 +114,16 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 
 	var newPeersList []peer.Peer
 
-	numTotal := 0
-	for numTotal < len(peersList) {
+	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
-			numTotal++
 			peer := msg.Peer
 			peer.ExistingPieces = msg.BytesReceived
 			newPeersList = append(newPeersList, *peer)
 			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", msg.BytesReceived, " with status : ", msg.Message)
 		}
 	}
-	fmt.Println("All peers got their contents!")
+
 	return newPeersList
 }
 
@@ -142,20 +136,17 @@ func (downloader Downloader) StartDownloading() {
 		panic(err)
 	}
 
-	numTotal := 0
-	numOk := 0
-
 	// At this point , we have loop where we wait for all the peers to complete their handshake or not.
 	// We wait for the message to come from another goroutine , and we parse it.
 
 	var goodPeers []peer.Peer
+	numOk := 0
 
-	for numTotal < peersCount {
+	for numTotal := 0; numTotal < peersCount; numTotal++ {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			status := msg.Message
-			numTotal++
 			if status == "Handshake OK" {
 				numOk++
 				goodPeers = append(goodPeers, *peer)
@@ -169,21 +160,20 @@ func (downloader Downloader) StartDownloading() {
 	// We wait for peers to tell us , what pieces they have.
 	// This is mandatory , since peers always send this first.
 	goodPeers = downloader.GetFileContents(goodPeers)
+
 	// We send an interested message to all peers
 	downloader.SendInterestedAndUnchokedToPeers(goodPeers)
-	// We request a piece just to check if it receives
 
+	// We request a piece just to check if it receives
 	for index, _ := range goodPeers {
-		goodPeers[index].RequestPiece(comm, 100, 0, 1<<8)
+		goodPeers[index].RequestPiece(comm, 0, 0, 1<<14)
 	}
 
-	numTotal = 0
-	for numTotal < len(goodPeers) {
+	for numTotal := 0; numTotal < len(goodPeers); numTotal++ {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			status := msg.Message
-			numTotal++
 			if status == "Request OK" {
 				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", msg.BytesReceived)
 			} else {
@@ -195,7 +185,7 @@ func (downloader Downloader) StartDownloading() {
 	// We disconnect the peers so they dont remain connected after use
 
 	for index, _ := range goodPeers {
-		goodPeers[index].Disconnect()
+		defer goodPeers[index].Disconnect()
 	}
 
 	return

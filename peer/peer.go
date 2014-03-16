@@ -86,7 +86,7 @@ func (peer *Peer) connect(callback func(error)) {
 func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 
 	//First we read the first 5 bytes;
-	(*peer.Connection).SetDeadline(time.Now().Add(timeout))
+	(*peer.Connection).SetReadDeadline(time.Now().Add(timeout))
 	readBuffer := []byte{0, 0, 0, 0, 0}
 	bytesRead, err := (*peer.Connection).Read(readBuffer)
 
@@ -132,7 +132,7 @@ func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
 
-			bitsetInfo := make([]byte, (peer.TorrentInfo.FileInformations.PieceCount/8)+1)
+			bitfieldInfo := make([]byte, (peer.TorrentInfo.FileInformations.PieceCount/8)+1)
 
 			for true {
 				id, data, err := peer.TryReadMessage(1 * time.Second)
@@ -142,18 +142,20 @@ func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
 
 				if id == BITFIELD {
 					for index, _ := range data {
-						bitsetInfo[index] |= data[index]
+						bitfieldInfo[index] |= data[index]
 					}
 				} else if id == HAVE {
 					pieceIndex := bytesToInt(data)
-					bitsetPosition := pieceIndex / 8
-					bytePosition := pieceIndex - (bitsetPosition * 8)
-					bitsetInfo[bitsetPosition] |= (1 << (7 - byte(bytePosition)))
+					bitfieldPosition := pieceIndex / 8
+					bytePosition := pieceIndex - (bitfieldPosition * 8)
+					bitfieldInfo[bitfieldPosition] |= (1 << (7 - byte(bytePosition)))
 				}
 			}
-			comm <- PeerCommunication{peer, bitsetInfo, "Contents OK"}
+			comm <- PeerCommunication{peer, bitfieldInfo, "Contents OK"}
 			return
 		})()
+	} else {
+		comm <- PeerCommunication{peer, nil, "Error at contents: Peer not connected"}
 	}
 }
 
@@ -162,7 +164,7 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 1}
 
-			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
 			bytesWritten, err := (*peer.Connection).Write(buf)
 
 			if err != nil || bytesWritten < len(buf) {
@@ -177,6 +179,8 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 			comm <- PeerCommunication{peer, nil, "Unchoked OK"}
 			return
 		})()
+	} else {
+		comm <- PeerCommunication{peer, nil, "Error at unchoke: Peer not connected"}
 	}
 }
 
@@ -184,7 +188,7 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 2}
-			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
 			bytesWritten, err := (*peer.Connection).Write(buf)
 
 			if err != nil || bytesWritten < len(buf) {
@@ -196,7 +200,7 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 				return
 			}
 
-			id, data, err := peer.TryReadMessage(6 * time.Second)
+			id, data, err := peer.TryReadMessage(2 * time.Second)
 
 			if err != nil || id != UNCHOKE {
 				if err != nil {
@@ -210,6 +214,8 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 
 			return
 		})()
+	} else {
+		comm <- PeerCommunication{peer, nil, "Error at interested: Peer not connected"}
 	}
 }
 
@@ -241,7 +247,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 			bytesToBeWritten = append(bytesToBeWritten, intToBytes(begin)...)
 			bytesToBeWritten = append(bytesToBeWritten, intToBytes(length)...)
 
-			(*peer.Connection).SetDeadline(time.Now().Add(5 * time.Second))
+			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
 			bytesWritten, err := (*peer.Connection).Write(bytesToBeWritten)
 
 			if err != nil || bytesWritten < len(bytesToBeWritten) {
@@ -254,7 +260,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 				return
 			}
 
-			id, data, err := peer.TryReadMessage(6 * time.Second)
+			id, data, err := peer.TryReadMessage(2 * time.Second)
 
 			if err != nil || id != PIECE {
 				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
