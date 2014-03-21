@@ -48,6 +48,7 @@ const (
 	PORT           = 9
 )
 
+// GetInfo return a string consisting of peer status
 func (peer *Peer) GetInfo() string {
 	infoString := fmt.Sprintf("Remote IP : %s:%d", peer.IP, peer.Port)
 	infoString += fmt.Sprintln()
@@ -68,6 +69,7 @@ func (peer *Peer) GetInfo() string {
 	return infoString
 }
 
+// connect tries to get a TCP then an UDP connection for a peer
 func (peer *Peer) connect(callback func(error)) {
 	go (func() {
 		for _, protocol := range []string{"tcp", "udp"} {
@@ -83,6 +85,7 @@ func (peer *Peer) connect(callback func(error)) {
 	})()
 }
 
+// TryReadMessage returns (type of messasge, message, error) received by a peer
 func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 
 	//First we read the first 5 bytes;
@@ -126,12 +129,12 @@ func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 	return id, writeBuffer, nil
 }
 
+// WaitForContents sends to channel comm information about downloaded content of a peer
 func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
-
 			bitfieldInfo := make([]byte, (peer.TorrentInfo.FileInformations.PieceCount/8)+1)
 
 			for true {
@@ -159,6 +162,7 @@ func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
 	}
 }
 
+// SendUnchoke sends to the peer to unchoke
 func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
@@ -184,6 +188,8 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 	}
 }
 
+// SendInterested sends to the peer through the main channel that it's interested
+// Data transfer takes place whenever one side is interested and the other side is not choking
 func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
@@ -219,6 +225,7 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 	}
 }
 
+// intToBytes converts value to an array of bytes and returns it
 func intToBytes(value int) []byte {
 
 	bytes := []byte{0, 0, 0, 0}
@@ -231,6 +238,7 @@ func intToBytes(value int) []byte {
 	return bytes
 }
 
+// bytesToInt converts bytes to an integer and returns it.
 func bytesToInt(bytes []byte) int {
 	var number int = 0
 	for _, b := range bytes {
@@ -239,6 +247,8 @@ func bytesToInt(bytes []byte) int {
 	return number
 }
 
+// RequestPiece makes a request to tracker to obtain 'length' bytes from 'begin'
+// the data is sent to channel 'comm'.
 func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int, length int) {
 	if peer.Status == Connected && peer.Connection != nil {
 		go (func() {
@@ -274,6 +284,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 	}
 }
 
+// Disconnect closes the connection of a peer.
 func (peer *Peer) Disconnect() {
 
 	peer.Status = Disconnected
@@ -284,6 +295,7 @@ func (peer *Peer) Disconnect() {
 	return
 }
 
+// Handshake attempts to set up the first message transmitted by the peer, sending the response through comm
 func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	if peer.Status == Disconnected || peer.Connection == nil {
 		peer.connect(func(err error) {
@@ -358,6 +370,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	})()
 }
 
+// New returns a peer with given description
 func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port int) Peer {
 	return Peer{
 		IP:          ip,

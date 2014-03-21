@@ -1,3 +1,5 @@
+
+// Package local_server implements a http Server for handling each peer communication
 package local_server
 
 import (
@@ -19,6 +21,7 @@ func (req requestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "hi!!")
 }
 
+// New returns a http local server for peerId
 func New(peerId string) *LocalServer {
 	tryPorts := []int{6881, 6882, 6883, 6884, 6885, 6886, 6887, 6888, 6889}
 	serverChan := make(chan *http.Server)
