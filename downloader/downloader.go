@@ -1,5 +1,5 @@
 
-// Package downloader implements 
+// Package downloader implements basic functions for downloading a torrent file
 package downloader
 
 import (
