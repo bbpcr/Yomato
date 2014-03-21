@@ -1,3 +1,5 @@
+
+//Package tracker implements basic functionalities offered by a Torrent Tracker
 package tracker
 
 import (
@@ -17,6 +19,7 @@ type Tracker struct {
 	Port        int
 }
 
+// readPeersFromAnnouncer returns peers from AnnouncerUrl
 func readPeersFromAnnouncer(AnnouncerUrl string) (bencode.Bencoder, error) {
 
 	response, err := http.Get(AnnouncerUrl)
@@ -49,6 +52,8 @@ func readPeersFromAnnouncer(AnnouncerUrl string) (bencode.Bencoder, error) {
 	return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
 }
 
+// RequestPeers encodes an URL, making a request to announcer then
+// returns the peers bencoded from readPeersFromAnnouncer
 func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) (bencode.Bencoder, error) {
 	peerId := tracker.PeerId
 
@@ -80,6 +85,7 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 	return bencode.Dictionary{}, errors.New("No announcer responded correctly")
 }
 
+// New returns a Tracker type with given parameters
 func New(info *torrent_info.TorrentInfo, port int, peerId string) Tracker {
 	tracker := Tracker{
 		TorrentInfo: info,

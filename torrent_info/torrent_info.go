@@ -1,3 +1,6 @@
+
+// Package torrent_info gathers all the info from a given Bencoder Object
+// All you need to know is the GetInfoFromBencoder() function
 package torrent_info
 
 import (
@@ -23,6 +26,7 @@ type InfoDictionary struct {
 	Private       int64
 }
 
+// TorrentInfo stores useful information about a Torrent file
 type TorrentInfo struct {
 	FileInformations InfoDictionary
 	AnnounceUrl      string
@@ -34,6 +38,7 @@ type TorrentInfo struct {
 	InfoHash         []byte
 }
 
+// Description prints out fields of a TorrentInfo object.
 func (torrentInfo TorrentInfo) Description() string {
 	description :=
 		fmt.Sprintln("-----") +
@@ -62,6 +67,7 @@ func (torrentInfo TorrentInfo) Description() string {
 	return description + fmt.Sprintln("-----")
 }
 
+// getFileInformationFromBencoder overrides 'Files' field of 'output' TorrentInfo pointer with given Bencoder structure.
 func getFileInformationFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) error {
 
 	if _, isDictionary := decoded.(*bencode.Dictionary); !isDictionary {
@@ -102,6 +108,7 @@ func getFileInformationFromBencoder(decoded bencode.Bencoder, output *TorrentInf
 	return nil
 }
 
+// getInfoDictionaryFromBencoder overrides 'FileInformations' field of 'output' TorrentInfo pointer with given Bencoder structure.
 func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo) error {
 
 	if _, isDictionary := decoded.(*bencode.Dictionary); !isDictionary {
@@ -144,8 +151,8 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 	}
 
 	if output.FileInformations.MultipleFiles {
-		//We have two or more files
 
+        //We have two or more files
 		for key, value := range dictionary.Values {
 			switch key.Value {
 			case "name":
@@ -166,6 +173,7 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 			}
 		}
 	} else {
+
 		// We have only one file
 		oneFile := SingleFileInfo{}
 		for key, value := range dictionary.Values {
@@ -194,6 +202,8 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 	return nil
 }
 
+// GetInfoFromBencoder tries to get all the information from the Bencoder and returns a TorrentInfo pointer,
+// hopefully filling all the fields of a TorrentInfo structure.
 func GetInfoFromBencoder(decoded bencode.Bencoder) (*TorrentInfo, error) {
 
 	info := &TorrentInfo{}
@@ -230,6 +240,7 @@ func GetInfoFromBencoder(decoded bencode.Bencoder) (*TorrentInfo, error) {
 				info.Encoding = data.Value
 			}
 		case "announce-list":
+
 			// It should be a list of list of strings but we check each time we convert the interface
 			if announceList, isList := value.(*bencode.List); isList {
 				for _, listBencoder := range announceList.Values {

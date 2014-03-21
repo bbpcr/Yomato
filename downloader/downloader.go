@@ -1,3 +1,5 @@
+
+// Package downloader implements 
 package downloader
 
 import (
@@ -66,7 +68,6 @@ func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.Peer
 func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.Peer) {
 
 	// We send an unchoke message to the peers
-
 	comm := make(chan peer.PeerCommunication)
 
 	for index, _ := range peersList {
@@ -74,7 +75,6 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 	}
 
 	// We wait for all of them to finish sending
-
 	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
@@ -85,13 +85,11 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 	}
 
 	// We send an interested message to the peers
-
 	for index, _ := range peersList {
 		peersList[index].SendInterested(comm)
 	}
 
 	// We wait for all of them to finish sending
-
 	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
@@ -103,15 +101,17 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 	return
 }
 
+// GetFileContents iterates through a list of peers and returns a new list containing the information of
+// downloaded content for each of the peer.
 func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer {
 	comm := make(chan peer.PeerCommunication)
 
+    // Next 2 lines wouldn't be better if integrated in a go func() ?
 	for index, _ := range peersList {
 		peersList[index].WaitForContents(comm)
 	}
 
 	// We wait for all of them to finish sending
-
 	var newPeersList []peer.Peer
 
 	for numTotal := 0; numTotal < len(peersList); numTotal++ {
@@ -127,6 +127,7 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 	return newPeersList
 }
 
+// StartDownloading downloads the motherfucker
 func (downloader Downloader) StartDownloading() {
 
 	comm := make(chan peer.PeerCommunication)
@@ -138,7 +139,6 @@ func (downloader Downloader) StartDownloading() {
 
 	// At this point , we have loop where we wait for all the peers to complete their handshake or not.
 	// We wait for the message to come from another goroutine , and we parse it.
-
 	var goodPeers []peer.Peer
 	numOk := 0
 
@@ -183,7 +183,6 @@ func (downloader Downloader) StartDownloading() {
 	}
 
 	// We disconnect the peers so they dont remain connected after use
-
 	for index, _ := range goodPeers {
 		defer goodPeers[index].Disconnect()
 	}
@@ -191,6 +190,7 @@ func (downloader Downloader) StartDownloading() {
 	return
 }
 
+// New returns a Downloader from a torrent file.
 func New(torrent_path string) *Downloader {
 	data, err := ioutil.ReadFile(torrent_path)
 	if err != nil {
