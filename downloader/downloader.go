@@ -1,4 +1,3 @@
-
 // Package downloader implements basic functions for downloading a torrent file
 package downloader
 
@@ -106,7 +105,7 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer {
 	comm := make(chan peer.PeerCommunication)
 
-    // Next 2 lines wouldn't be better if integrated in a go func() ?
+	// Next 2 lines wouldn't be better if integrated in a go func() ?
 	for index, _ := range peersList {
 		peersList[index].ReadExistingPieces(comm)
 	}
