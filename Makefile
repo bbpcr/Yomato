@@ -10,7 +10,7 @@ test: test-bencode
 test-bencode:
 	export GOPATH=$(PWD)
 	cp -R test_data bencode/test_data
-	go test ...bencode
+	go test ...bencode ...bitfield
 	rm -rf bencode/test_data
 
 yomato:

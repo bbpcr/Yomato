@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"net"
 	"time"
-
+	
+	"github.com/bbpcr/Yomato/bitfield"
 	"github.com/bbpcr/Yomato/torrent_info"
 )
 
@@ -32,7 +33,7 @@ type Peer struct {
 	TorrentInfo    *torrent_info.TorrentInfo
 	LocalPeerId    string
 	RemotePeerId   string
-	ExistingPieces []byte
+	BitfieldInfo bitfield.Bitfield
 }
 
 const (
@@ -130,12 +131,13 @@ func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 }
 
 // WaitForContents sends to channel comm information about downloaded content of a peer
-func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
+func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 	if peer.Status == Connected && peer.Connection != nil {
 
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
-			bitfieldInfo := make([]byte, (peer.TorrentInfo.FileInformations.PieceCount/8)+1)
+		
+			bitfieldInfo := bitfield.New(int(peer.TorrentInfo.FileInformations.PieceCount))
 
 			for true {
 				id, data, err := peer.TryReadMessage(1 * time.Second)
@@ -144,17 +146,15 @@ func (peer *Peer) WaitForContents(comm chan PeerCommunication) {
 				}
 
 				if id == BITFIELD {
-					for index, _ := range data {
-						bitfieldInfo[index] |= data[index]
-					}
+					bitfieldInfo.Put(data , len(data))
 				} else if id == HAVE {
 					pieceIndex := bytesToInt(data)
-					bitfieldPosition := pieceIndex / 8
-					bytePosition := pieceIndex - (bitfieldPosition * 8)
-					bitfieldInfo[bitfieldPosition] |= (1 << (7 - byte(bytePosition)))
+					bitfieldInfo.Set(pieceIndex , true)
 				}
 			}
-			comm <- PeerCommunication{peer, bitfieldInfo, "Contents OK"}
+			
+			peer.BitfieldInfo = bitfieldInfo			
+			comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode() , "Contents OK"}
 			return
 		})()
 	} else {

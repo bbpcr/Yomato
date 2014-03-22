@@ -108,7 +108,7 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 
     // Next 2 lines wouldn't be better if integrated in a go func() ?
 	for index, _ := range peersList {
-		peersList[index].WaitForContents(comm)
+		peersList[index].ReadExistingPieces(comm)
 	}
 
 	// We wait for all of them to finish sending
@@ -118,9 +118,8 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
-			peer.ExistingPieces = msg.BytesReceived
 			newPeersList = append(newPeersList, *peer)
-			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", msg.BytesReceived, " with status : ", msg.Message)
+			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", peer.BitfieldInfo, " with status : ", msg.Message)
 		}
 	}
 
