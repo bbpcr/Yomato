@@ -13,19 +13,20 @@ type Bitfield struct {
 
 func New(length int) Bitfield {
 
-	if length % 8 == 0 {
+	if length%8 == 0 {
 		bitfield := Bitfield{make([]uint8, length/8), uint(length)}
 		return bitfield
 	} else {
 		bitfield := Bitfield{make([]uint8, length/8+1), uint(length)}
 		return bitfield
 	}
+	return Bitfield{}
 }
 
 // Return true if the position `pos` is ON and false otherwise
 func (bitfield Bitfield) At(pos int) bool {
 
-	if (uint(pos / 8) >= bitfield.length) {
+	if uint(pos/8) >= bitfield.length {
 		return false
 	}
 
@@ -37,7 +38,7 @@ func (bitfield Bitfield) At(pos int) bool {
 // Sets a position ON or OFF
 func (bitfield Bitfield) Set(pos int, val bool) {
 
-	if (uint(pos / 8) >= bitfield.length) {
+	if uint(pos/8) >= bitfield.length {
 		return
 	}
 
@@ -52,13 +53,13 @@ func (bitfield Bitfield) Set(pos int, val bool) {
 }
 
 // Puts the bytes into bitfield. This isn't a regular copy , instead it or's with all bytes.
-func (bitfield Bitfield) Put(bytes []uint8 , count int) {
-	
+func (bitfield Bitfield) Put(bytes []uint8, count int) {
+
 	if count < 0 {
 		return
 	}
-	
-	for index := 0 ; index < count ; index ++ {
+
+	for index := 0; index < count; index++ {
 		bitfield.bytes[index] |= bytes[index]
 	}
 }

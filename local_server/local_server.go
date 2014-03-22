@@ -1,4 +1,3 @@
-
 // Package local_server implements a http Server for handling each peer communication
 package local_server
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"time"
-	
+
 	"github.com/bbpcr/Yomato/bitfield"
 	"github.com/bbpcr/Yomato/torrent_info"
 )
@@ -25,14 +25,14 @@ type PeerCommunication struct {
 }
 
 type Peer struct {
-	IP             string
-	Port           int
-	Connection     *net.Conn
-	Protocol       string
-	Status         PeerStatus
-	TorrentInfo    *torrent_info.TorrentInfo
-	LocalPeerId    string
-	RemotePeerId   string
+	IP           string
+	Port         int
+	Connection   *net.Conn
+	Protocol     string
+	Status       PeerStatus
+	TorrentInfo  *torrent_info.TorrentInfo
+	LocalPeerId  string
+	RemotePeerId string
 	BitfieldInfo bitfield.Bitfield
 }
 
@@ -136,7 +136,7 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
-		
+
 			bitfieldInfo := bitfield.New(int(peer.TorrentInfo.FileInformations.PieceCount))
 
 			for true {
@@ -146,15 +146,15 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 				}
 
 				if id == BITFIELD {
-					bitfieldInfo.Put(data , len(data))
+					bitfieldInfo.Put(data, len(data))
 				} else if id == HAVE {
 					pieceIndex := bytesToInt(data)
-					bitfieldInfo.Set(pieceIndex , true)
+					bitfieldInfo.Set(pieceIndex, true)
 				}
 			}
-			
-			peer.BitfieldInfo = bitfieldInfo			
-			comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode() , "Contents OK"}
+
+			peer.BitfieldInfo = bitfieldInfo
+			comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode(), "Contents OK"}
 			return
 		})()
 	} else {
