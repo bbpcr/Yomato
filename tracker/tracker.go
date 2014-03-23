@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"strings"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/torrent_info"
@@ -65,12 +66,19 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		}
 		return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
 	} else if protocol == "udp" {
-
-		adress, err := net.ResolveUDPAddr("udp", announceUrl[6:])
+		
+		if strings.HasSuffix(announceUrl , "/announce") {
+			announceUrl = announceUrl[6 : strings.LastIndex(announceUrl, "/announce")];
+		} else {
+			announceUrl = announceUrl[6:]
+		}
+		
+		adress, err := net.ResolveUDPAddr("udp", announceUrl)
+		fmt.Println(adress , " " , announceUrl)
 		if err != nil {
+			fmt.Println(err)
 			return bencode.Dictionary{}, err
 		}
-		fmt.Println(adress)
 		udpConnection, err := net.DialUDP("udp", nil, adress)
 		if err != nil {
 			return bencode.Dictionary{}, err
@@ -109,8 +117,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		receivedConnectionID := binary.BigEndian.Uint64(buffer[8:16])
 		if receivedAction != 0 || receivedTransactionID != 1000 {
 			return bencode.Dictionary{}, errors.New("Unable to make a connection with the udp server")
-		}
-
+		}		
+		
 		//At this point we have connected succesfully to the udp server.Now we can begin to request peers
 
 		//Step three , we send the request for peers.
