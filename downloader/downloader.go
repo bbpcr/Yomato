@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/bbpcr/Yomato/bencode"
+	"github.com/bbpcr/Yomato/bitfield"
+	"github.com/bbpcr/Yomato/file_writer"
 	"github.com/bbpcr/Yomato/local_server"
 	"github.com/bbpcr/Yomato/peer"
 	"github.com/bbpcr/Yomato/torrent_info"
@@ -19,6 +22,7 @@ type Downloader struct {
 	TorrentInfo torrent_info.TorrentInfo
 	LocalServer *local_server.LocalServer
 	PeerId      string
+	Bitfield    bitfield.Bitfield
 }
 
 func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) (peersCount int, err error) {
@@ -155,8 +159,8 @@ func (downloader Downloader) StartDownloading() {
 		}
 	}
 
-	// We wait for peers to tell us , what pieces they have.
-	// This is mandatory , since peers always send this first.
+	// We wait for peers to tell us what pieces they have.
+	// This is mandatory, since peers always send this first.
 	goodPeers = downloader.GetFileContents(goodPeers)
 
 	// We send an interested message to all peers
@@ -167,18 +171,27 @@ func (downloader Downloader) StartDownloading() {
 		goodPeers[index].RequestPiece(comm, 0, 0, 1<<14)
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	writer := file_writer.New(cwd, downloader.TorrentInfo)
+	writerChan := make(chan file_writer.PieceData)
+	go writer.StartWriting(writerChan)
+
 	for numTotal := 0; numTotal < len(goodPeers); numTotal++ {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			status := msg.Message
 			if status == "Request OK" {
-				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", msg.BytesReceived)
+				writerChan <- file_writer.PieceData{0, msg.BytesReceived}
 			} else {
 				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", status)
 			}
 		}
 	}
+	close(writerChan)
 
 	// We disconnect the peers so they dont remain connected after use
 	for index, _ := range goodPeers {
@@ -208,6 +221,7 @@ func New(torrent_path string) *Downloader {
 	downloader := &Downloader{
 		TorrentInfo: *torrentInfo,
 		PeerId:      peerId,
+		Bitfield:    bitfield.New(int(torrentInfo.FileInformations.PieceCount)),
 	}
 	downloader.LocalServer = local_server.New(peerId)
 	tracker := tracker.New(torrentInfo, downloader.LocalServer.Port, peerId)
