@@ -253,11 +253,15 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 		return data, nil
 	}
 
+	fmt.Printf("Error: %s\n", err.Error())
+
 	for _, anotherAnnounceUrl := range tracker.TorrentInfo.AnnounceList {
 		data, err := readPeersFromAnnouncer(anotherAnnounceUrl, peerId, string(tracker.TorrentInfo.InfoHash), tracker.Port, bytesUploaded, bytesDownloaded, bytesLeft)
 		if err == nil {
 			return data, nil
 		}
+
+		fmt.Printf("Error: %s\n", err.Error())
 	}
 
 	return bencode.Dictionary{}, errors.New("No announcer responded correctly")
