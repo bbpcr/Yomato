@@ -1,7 +1,6 @@
 package file_writer
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/bbpcr/Yomato/torrent_info"
@@ -9,6 +8,7 @@ import (
 
 type PieceData struct {
 	PieceNumber int
+	Offset      int
 	Piece       []byte
 }
 
@@ -33,7 +33,6 @@ func New(root string, torrent torrent_info.TorrentInfo) Writer {
 func (writer Writer) WritePiece(file *os.File, offset int64, piece []byte) {
 	file.Seek(offset, 0)
 	_, err := file.Write(piece)
-	fmt.Printf("Write to %Q data: %Q", file, piece)
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +58,6 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 	for {
 		select {
 		case data, ok := <-comm:
-			fmt.Printf("\n\n\nGOT MESSAGE\n\n\n")
 			if !ok {
 				return
 			}

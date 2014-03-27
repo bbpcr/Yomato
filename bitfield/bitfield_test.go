@@ -12,4 +12,7 @@ func TestBasicBitfield(t *testing.T) {
 	if b.Dump() != "0000000001" {
 		t.Errorf("Bitfield not setting bits correctly: %s", b.Dump())
 	}
+	if b.At(9) != true {
+		t.Errorf("Bitfield At method not working correctly.")
+	}
 }
