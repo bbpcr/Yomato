@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -17,12 +18,17 @@ import (
 	"github.com/bbpcr/Yomato/tracker"
 )
 
+const (
+	SubpieceLength = 1 << 14
+)
+
 type Downloader struct {
 	Tracker     tracker.Tracker
 	TorrentInfo torrent_info.TorrentInfo
 	LocalServer *local_server.LocalServer
 	PeerId      string
-	Bitfield    bitfield.Bitfield
+	Bitfield    *bitfield.Bitfield
+	GoodPeers   []peer.Peer
 }
 
 func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) (peersCount int, err error) {
@@ -80,10 +86,10 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 	// We wait for all of them to finish sending
 	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
-		case msg, _ := <-comm:
-			status := msg.Message
-			peer := msg.Peer
-			fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received bytes : ", msg.BytesReceived, " with status : ", status)
+		case _, _ = <-comm:
+			// status := msg.Message
+			// peer := msg.Peer
+			// fmt.Println("Sent unchoked to ", peer.RemotePeerId, " and received bytes : ", msg.BytesReceived, " with status : ", status)
 		}
 	}
 
@@ -122,7 +128,7 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			newPeersList = append(newPeersList, *peer)
-			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", peer.BitfieldInfo, " with status : ", msg.Message)
+			// fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", peer.BitfieldInfo, " with status : ", msg.Message)
 		}
 	}
 
@@ -130,46 +136,12 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 }
 
 // StartDownloading downloads the motherfucker
-func (downloader Downloader) StartDownloading() {
+func (downloader *Downloader) StartDownloading() {
 
-	comm := make(chan peer.PeerCommunication)
-	peersCount, err := downloader.RequestPeersAndRequestHandshake(comm, 0, 0, 10000)
-
-	if err != nil {
-		panic(err)
-	}
-
-	// At this point , we have loop where we wait for all the peers to complete their handshake or not.
-	// We wait for the message to come from another goroutine , and we parse it.
-	var goodPeers []peer.Peer
-	numOk := 0
-
-	for numTotal := 0; numTotal < peersCount; numTotal++ {
-		select {
-		case msg, _ := <-comm:
-			peer := msg.Peer
-			status := msg.Message
-			if status == "Handshake OK" {
-				numOk++
-				goodPeers = append(goodPeers, *peer)
-			} else if strings.Contains(status, "Error at handshake") {
-
-			}
-			fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, numTotal)
-		}
-	}
-
-	// We wait for peers to tell us what pieces they have.
-	// This is mandatory, since peers always send this first.
-	goodPeers = downloader.GetFileContents(goodPeers)
+	comm := downloader.FindGoodPeers()
 
 	// We send an interested message to all peers
-	downloader.SendInterestedAndUnchokedToPeers(goodPeers)
-
-	// We request a piece just to check if it receives
-	for index, _ := range goodPeers {
-		goodPeers[index].RequestPiece(comm, 0, 0, 1<<14)
-	}
+	downloader.SendInterestedAndUnchokedToPeers(downloader.GoodPeers)
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -179,23 +151,71 @@ func (downloader Downloader) StartDownloading() {
 	writerChan := make(chan file_writer.PieceData)
 	go writer.StartWriting(writerChan)
 
-	for numTotal := 0; numTotal < len(goodPeers); numTotal++ {
+	piecesDownloading := make(map[int]int)
+
+	var nextPiece int
+	for idx, _ := range downloader.GoodPeers {
+		nextPiece, err = downloader.GetNextPieceToDownload()
+		if err != nil {
+			// done
+			break
+		}
+		downloader.Bitfield.Set(nextPiece, true)
+		downloader.GoodPeers[idx].RequestPiece(comm, nextPiece, 0, SubpieceLength)
+		piecesDownloading[nextPiece] = 0
+	}
+
+	piecesFinished := 0
+	for {
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			status := msg.Message
 			if status == "Request OK" {
-				writerChan <- file_writer.PieceData{0, msg.BytesReceived}
+				writerChan <- file_writer.PieceData{msg.Piece, msg.Offset, msg.BytesReceived}
+				piecesDownloading[msg.Piece] += len(msg.BytesReceived)
+
+				for key, val := range piecesDownloading {
+					fmt.Printf("%d -> %d / %d\n", key, val, downloader.TorrentInfo.FileInformations.PieceLength)
+				}
+				fmt.Printf("==================\n")
+
+				if int64(piecesDownloading[msg.Piece]) >= downloader.TorrentInfo.FileInformations.PieceLength {
+					piecesFinished++
+					fmt.Printf(
+						"Pieces downloaded: %d/%d\n",
+						piecesFinished,
+						downloader.TorrentInfo.FileInformations.PieceCount,
+					)
+					delete(piecesDownloading, msg.Piece) // finished
+					nextPiece, err := downloader.GetNextPieceToDownload()
+					if err != nil {
+						break
+					}
+					downloader.Bitfield.Set(nextPiece, true)
+
+					if int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[msg.Piece] < SubpieceLength {
+						peer.RequestPiece(comm, nextPiece, piecesDownloading[msg.Piece], int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[msg.Piece])
+					} else {
+						peer.RequestPiece(comm, nextPiece, piecesDownloading[msg.Piece], SubpieceLength)
+					}
+					piecesDownloading[nextPiece] = 0
+				} else {
+					msg.Peer.RequestPiece(comm, msg.Piece, piecesDownloading[msg.Piece], SubpieceLength)
+				}
 			} else {
-				fmt.Println("Requested from ", peer.RemotePeerId, " and received : ", status)
+
+				fmt.Printf("Error: %s\n", msg.Message)
+				// mark the piece as not downloaded in order for another peer to pick it up
+				delete(piecesDownloading, msg.Piece)
+				downloader.Bitfield.Set(msg.Piece, false)
 			}
 		}
 	}
-	close(writerChan)
 
 	// We disconnect the peers so they dont remain connected after use
-	for index, _ := range goodPeers {
-		defer goodPeers[index].Disconnect()
+	for index, _ := range downloader.GoodPeers {
+		defer downloader.GoodPeers[index].Disconnect()
 	}
 
 	return
@@ -217,16 +237,69 @@ func New(torrent_path string) *Downloader {
 		panic(err)
 	}
 
+	bitfield := bitfield.New(int(torrentInfo.FileInformations.PieceCount))
 	peerId := createPeerId()
 	downloader := &Downloader{
 		TorrentInfo: *torrentInfo,
 		PeerId:      peerId,
-		Bitfield:    bitfield.New(int(torrentInfo.FileInformations.PieceCount)),
+		Bitfield:    &bitfield,
 	}
 	downloader.LocalServer = local_server.New(peerId)
 	tracker := tracker.New(torrentInfo, downloader.LocalServer.Port, peerId)
 	downloader.Tracker = tracker
 	return downloader
+}
+
+// Returns the ID of the next piece to download.
+// This can use multiple strategies, e.g.
+// Sequentially (NOT good, easy for development)
+// or randomized (much better)
+func (downloader *Downloader) GetNextPieceToDownload() (int, error) {
+	for i := 0; i < int(downloader.Bitfield.Length); i++ {
+		if downloader.Bitfield.At(i) == false {
+			downloader.Bitfield.Set(i, true)
+			return i, nil
+		}
+	}
+	return -1, errors.New("Download complete")
+}
+
+// Sends a handshake to all the peers, and adds the availables ones to
+// downloader.GoodPeers. Also returns a communication channel for them.
+func (downloader *Downloader) FindGoodPeers() (comm chan peer.PeerCommunication) {
+	comm = make(chan peer.PeerCommunication)
+	peersCount, err := downloader.RequestPeersAndRequestHandshake(comm, 0, 0, 10000)
+
+	if err != nil {
+		panic(err)
+	}
+
+	// At this point , we have loop where we wait for all the peers to complete their handshake or not.
+	// We wait for the message to come from another goroutine , and we parse it.
+	numOk := 0
+
+	downloader.GoodPeers = make([]peer.Peer, 0)
+
+	for numTotal := 0; numTotal < peersCount; numTotal++ {
+		select {
+		case msg, _ := <-comm:
+			peer := msg.Peer
+			status := msg.Message
+			if status == "Handshake OK" {
+				numOk++
+				downloader.GoodPeers = append(downloader.GoodPeers, *peer)
+			} else if strings.Contains(status, "Error at handshake") {
+
+			}
+			fmt.Printf("\n-------------------------\n%sStatus Message : %s\nPeers OK : %d/%d\n-------------------------\n", peer.GetInfo(), status, numOk, numTotal)
+		}
+	}
+
+	// We wait for peers to tell us what pieces they have.
+	// This is mandatory, since peers always send this first.
+	downloader.GoodPeers = downloader.GetFileContents(downloader.GoodPeers)
+
+	return comm
 }
 
 func createPeerId() string {

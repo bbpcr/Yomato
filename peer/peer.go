@@ -22,6 +22,8 @@ type PeerCommunication struct {
 	Peer          *Peer
 	BytesReceived []byte
 	Message       string
+	Piece         int
+	Offset        int
 }
 
 type Peer struct {
@@ -154,11 +156,11 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 			}
 
 			peer.BitfieldInfo = bitfieldInfo
-			comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode(), "Contents OK"}
+			comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode(), "Contents OK", 0, 0}
 			return
 		})()
 	} else {
-		comm <- PeerCommunication{peer, nil, "Error at contents: Peer not connected"}
+		comm <- PeerCommunication{peer, nil, "Error at contents: Peer not connected", 0, 0}
 	}
 }
 
@@ -174,17 +176,17 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 			if err != nil || bytesWritten < len(buf) {
 
 				if err != nil {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", err)}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", err), 0, 0}
 				} else {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", "Insufficient bytes written")}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at unchoke: %s", "Insufficient bytes written"), 0, 0}
 				}
 				return
 			}
-			comm <- PeerCommunication{peer, nil, "Unchoked OK"}
+			comm <- PeerCommunication{peer, nil, "Unchoked OK", 0, 0}
 			return
 		})()
 	} else {
-		comm <- PeerCommunication{peer, nil, "Error at unchoke: Peer not connected"}
+		comm <- PeerCommunication{peer, nil, "Error at unchoke: Peer not connected", 0, 0}
 	}
 }
 
@@ -199,9 +201,9 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 
 			if err != nil || bytesWritten < len(buf) {
 				if err != nil {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err)}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err), 0, 0}
 				} else {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Insufficient bytes written")}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Insufficient bytes written"), 0, 0}
 				}
 				return
 			}
@@ -210,18 +212,18 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 
 			if err != nil || id != UNCHOKE {
 				if err != nil {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err)}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", err), 0, 0}
 				} else {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Didn't receive unchoked")}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at interested: %s", "Didn't receive unchoked"), 0, 0}
 				}
 				return
 			}
-			comm <- PeerCommunication{peer, data, "Interested OK"}
+			comm <- PeerCommunication{peer, data, "Interested OK", 0, 0}
 
 			return
 		})()
 	} else {
-		comm <- PeerCommunication{peer, nil, "Error at interested: Peer not connected"}
+		comm <- PeerCommunication{peer, nil, "Error at interested: Peer not connected", 0, 0}
 	}
 }
 
@@ -263,9 +265,9 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 			if err != nil || bytesWritten < len(bytesToBeWritten) {
 
 				if err != nil {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err), 0, 0}
 				} else {
-					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", "Insufficient bytes written")}
+					comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", "Insufficient bytes written"), 0, 0}
 				}
 				return
 			}
@@ -273,14 +275,14 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 			id, data, err := peer.TryReadMessage(2 * time.Second)
 
 			if err != nil || id != PIECE {
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err)}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at request: %s", err), 0, 0}
 			} else {
-				comm <- PeerCommunication{peer, data, "Request OK"}
+				comm <- PeerCommunication{peer, data, "Request OK", index, begin}
 			}
 			return
 		})()
 	} else {
-		comm <- PeerCommunication{peer, nil, "Error at request: Peer not connected"}
+		comm <- PeerCommunication{peer, nil, "Error at request: Peer not connected", 0, 0}
 	}
 }
 
@@ -305,12 +307,12 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 			} else {
 
 				peer.Disconnect()
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: %s", err)}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: %s", err), 0, 0}
 			}
 		})
 		return
 	} else if peer.Status != PendingHandshake {
-		comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: Invalid status: %d", peer.Status)}
+		comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: Invalid status: %d", peer.Status), 0, 0}
 		return
 	}
 
@@ -329,9 +331,9 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		if err != nil || bytesWritten < len(handshake) {
 
 			if err != nil {
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", err)}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", err), 0, 0}
 			} else {
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", "Insufficient bytes written")}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at sending handshake: %s", "Insufficient bytes written"), 0, 0}
 			}
 			peer.Disconnect()
 
@@ -345,9 +347,9 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 
 			peer.Disconnect()
 			if err != nil {
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", err)}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", err), 0, 0}
 			} else {
-				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", "Insufficient bytes read")}
+				comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at receiving handshake: %s", "Insufficient bytes read"), 0, 0}
 			}
 
 			return
@@ -358,7 +360,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 		if string(protocol) != protocolString {
 
 			peer.Disconnect()
-			comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: Wrong protocol %s", string(protocol))}
+			comm <- PeerCommunication{peer, nil, fmt.Sprintf("Error at handshake: Wrong protocol %s", string(protocol)), 0, 0}
 			return
 		}
 
@@ -366,7 +368,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 
 		peer.Status = Connected
 		peer.RemotePeerId = remotePeerId
-		comm <- PeerCommunication{peer, resp, "Handshake OK"}
+		comm <- PeerCommunication{peer, resp, "Handshake OK", 0, 0}
 	})()
 }
 

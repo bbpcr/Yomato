@@ -8,7 +8,7 @@ import (
 // https://wiki.theory.org/BitTorrentSpecification#bitfield:_.3Clen.3D0001.2BX.3E.3Cid.3D5.3E.3Cbitfield.3E
 type Bitfield struct {
 	bytes  []uint8
-	length uint
+	Length uint
 }
 
 func New(length int) Bitfield {
@@ -26,19 +26,19 @@ func New(length int) Bitfield {
 // Return true if the position `pos` is ON and false otherwise
 func (bitfield Bitfield) At(pos int) bool {
 
-	if uint(pos/8) >= bitfield.length {
+	if uint(pos/8) >= bitfield.Length {
 		return false
 	}
 
 	num := bitfield.bytes[pos/8]
-	val := num & (1 << uint(pos%8))
+	val := num & (1 << (7 - uint(pos%8)))
 	return (val != 0)
 }
 
 // Sets a position ON or OFF
 func (bitfield Bitfield) Set(pos int, val bool) {
 
-	if uint(pos/8) >= bitfield.length {
+	if uint(pos/8) >= bitfield.Length {
 		return
 	}
 
@@ -71,7 +71,7 @@ func (bitfield Bitfield) Dump() string {
 		for i := 7; i >= 0; i-- {
 			// don't zero-pad in the human readable form, only display
 			// the exact number of bits stored
-			if idx*8+(8-i) > int(bitfield.length) {
+			if idx*8+(8-i) > int(bitfield.Length) {
 				break
 			}
 			if num&(1<<uint(i)) != 0 {
