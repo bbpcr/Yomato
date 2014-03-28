@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"encoding/binary"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/bitfield"
@@ -102,7 +103,7 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 	for numTotal := 0; numTotal < len(peersList); numTotal++ {
 		select {
 		case msg, _ := <-comm:
-			status := msg.Message
+			status := msg.StatusMessage
 			peer := msg.Peer
 			fmt.Println("Sent interested to ", peer.RemotePeerId, " and received ", status)
 		}
@@ -169,46 +170,57 @@ func (downloader *Downloader) StartDownloading() {
 	for {
 		select {
 		case msg, _ := <-comm:
-			peer := msg.Peer
-			status := msg.Message
-			if status == "Request OK" {
-				writerChan <- file_writer.PieceData{msg.Piece, msg.Offset, msg.BytesReceived}
-				piecesDownloading[msg.Piece] += len(msg.BytesReceived)
+			receivedPeer := msg.Peer
+			msgID := msg.MessageID
+			status := msg.StatusMessage
+			if msgID == peer.REQUEST && status == "OK" {
+			
+				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
+				pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
+				pieceBytes := msg.BytesReceived[8:]
+			
+				writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, pieceBytes}
+				piecesDownloading[pieceIndex] += len(pieceBytes)
 
 				for key, val := range piecesDownloading {
 					fmt.Printf("%d -> %d / %d\n", key, val, downloader.TorrentInfo.FileInformations.PieceLength)
 				}
 				fmt.Printf("==================\n")
 
-				if int64(piecesDownloading[msg.Piece]) >= downloader.TorrentInfo.FileInformations.PieceLength {
+				if int64(piecesDownloading[pieceIndex]) >= downloader.TorrentInfo.FileInformations.PieceLength {
 					piecesFinished++
 					fmt.Printf(
 						"Pieces downloaded: %d/%d\n",
 						piecesFinished,
 						downloader.TorrentInfo.FileInformations.PieceCount,
 					)
-					delete(piecesDownloading, msg.Piece) // finished
+					delete(piecesDownloading, pieceIndex) // finished
 					nextPiece, err := downloader.GetNextPieceToDownload()
 					if err != nil {
 						break
 					}
 					downloader.Bitfield.Set(nextPiece, true)
-
-					if int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[msg.Piece] < SubpieceLength {
-						peer.RequestPiece(comm, nextPiece, piecesDownloading[msg.Piece], int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[msg.Piece])
-					} else {
-						peer.RequestPiece(comm, nextPiece, piecesDownloading[msg.Piece], SubpieceLength)
-					}
 					piecesDownloading[nextPiece] = 0
-				} else {
-					msg.Peer.RequestPiece(comm, msg.Piece, piecesDownloading[msg.Piece], SubpieceLength)
-				}
-			} else {
 
-				fmt.Printf("Error: %s\n", msg.Message)
+					if int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[pieceIndex] < SubpieceLength {
+						receivedPeer.RequestPiece(comm, nextPiece, piecesDownloading[nextPiece] , int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[pieceIndex])
+					} else {
+						receivedPeer.RequestPiece(comm, nextPiece, piecesDownloading[nextPiece] , SubpieceLength)
+					}
+				} else {
+					msg.Peer.RequestPiece(comm, pieceIndex, piecesDownloading[pieceIndex], SubpieceLength)
+				}
+			} else if msgID == peer.REQUEST {
+
+				fmt.Printf(msg.StatusMessage)
 				// mark the piece as not downloaded in order for another peer to pick it up
-				delete(piecesDownloading, msg.Piece)
-				downloader.Bitfield.Set(msg.Piece, false)
+				// if it is an error , we received the exact parameters of what we requested , if we have some.
+				// Right now , only the request have parameters
+				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
+				//pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
+				//pieceLength := int(binary.BigEndian.Uint32(msg.BytesReceived[8:12]))
+				delete(piecesDownloading, pieceIndex)
+				downloader.Bitfield.Set(pieceIndex , false)
 			}
 		}
 	}
@@ -284,8 +296,8 @@ func (downloader *Downloader) FindGoodPeers() (comm chan peer.PeerCommunication)
 		select {
 		case msg, _ := <-comm:
 			peer := msg.Peer
-			status := msg.Message
-			if status == "Handshake OK" {
+			status := msg.StatusMessage
+			if status == "OK" {
 				numOk++
 				downloader.GoodPeers = append(downloader.GoodPeers, *peer)
 			} else if strings.Contains(status, "Error at handshake") {
