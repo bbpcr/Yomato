@@ -15,6 +15,7 @@ type PeerStatus int
 const (
 	Disconnected PeerStatus = iota
 	PendingHandshake
+	Handshaked
 	Connected
 )
 
@@ -38,17 +39,18 @@ type Peer struct {
 }
 
 const (
-	CHOKE          = 0
-	UNCHOKE        = 1
-	INTERESTED     = 2
-	NOT_INTERESTED = 3
-	HAVE           = 4
-	BITFIELD       = 5
-	REQUEST        = 6
-	PIECE          = 7
-	CANCEL         = 8
-	PORT           = 9
-	HANDSHAKE      = 10
+	CHOKE           = 0
+	UNCHOKE         = 1
+	INTERESTED      = 2
+	NOT_INTERESTED  = 3
+	HAVE            = 4
+	BITFIELD        = 5
+	REQUEST         = 6
+	PIECE           = 7
+	CANCEL          = 8
+	PORT            = 9
+	HANDSHAKE       = 10
+	FULL_CONNECTION = 11
 )
 
 // GetInfo return a string consisting of peer status
@@ -134,7 +136,7 @@ func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 
 // WaitForContents sends to channel comm information about downloaded content of a peer
 func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
-	if peer.Status == Connected && peer.Connection != nil {
+	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
 
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
@@ -166,7 +168,7 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 
 // SendUnchoke sends to the peer to unchoke
 func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
-	if peer.Status == Connected && peer.Connection != nil {
+	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 1}
 
@@ -192,7 +194,7 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 // SendInterested sends to the peer through the main channel that it's interested
 // Data transfer takes place whenever one side is interested and the other side is not choking
 func (peer *Peer) SendInterested(comm chan PeerCommunication) {
-	if peer.Status == Connected && peer.Connection != nil {
+	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 2}
 			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -270,7 +272,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 	bytesToBeWritten = append(bytesToBeWritten, intToBytes(begin)...)
 	bytesToBeWritten = append(bytesToBeWritten, intToBytes(length)...)
 
-	if peer.Status == Connected && peer.Connection != nil {
+	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
 		go (func() {
 
 			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -380,9 +382,50 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 
 		remotePeerId := string(resp[48:])
 
-		peer.Status = Connected
+		peer.Status = Handshaked
 		peer.RemotePeerId = remotePeerId
 		comm <- PeerCommunication{peer, resp, HANDSHAKE, "OK"}
+	})()
+}
+
+func (peer *Peer) EstablishFullConnection(comm chan PeerCommunication) {
+
+	go (func() {
+		tempChan := make(chan PeerCommunication)
+		peer.Handshake(tempChan)
+
+		msg, _ := <-tempChan
+		if msg.StatusMessage != "OK" {
+			comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "Error:Unable to handshake"}
+			return
+		}
+
+		//fmt.Println(peer.RemotePeerId, " passed HANDSHAKE")
+
+		peer.ReadExistingPieces(tempChan)
+		msg, _ = <-tempChan
+		if msg.StatusMessage != "OK" {
+			comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "Error:Unable to read the bitfield"}
+			return
+		}
+
+		//fmt.Println(peer.RemotePeerId, " passed BITFIELD")
+
+		peer.SendUnchoke(tempChan)
+		msg, _ = <-tempChan
+		if msg.StatusMessage != "OK" {
+		}
+
+		//fmt.Println(peer.RemotePeerId, " passed UNCHOKE")
+
+		peer.SendInterested(tempChan)
+		msg, _ = <-tempChan
+		if msg.StatusMessage != "OK" {
+		}
+
+		peer.Status = Connected
+		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "OK"}
+		return
 	})()
 }
 
