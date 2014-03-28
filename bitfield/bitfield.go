@@ -7,24 +7,26 @@ import (
 // A bitfield is defined as here:
 // https://wiki.theory.org/BitTorrentSpecification#bitfield:_.3Clen.3D0001.2BX.3E.3Cid.3D5.3E.3Cbitfield.3E
 type Bitfield struct {
-	bytes  []uint8
-	Length uint
+	bytes    []uint8
+	Length   uint
+	ZeroBits int
+	OneBits  int
 }
 
 func New(length int) Bitfield {
 
 	if length%8 == 0 {
-		bitfield := Bitfield{make([]uint8, length/8), uint(length)}
+		bitfield := Bitfield{make([]uint8, length/8), uint(length), length, 0}
 		return bitfield
 	} else {
-		bitfield := Bitfield{make([]uint8, length/8+1), uint(length)}
+		bitfield := Bitfield{make([]uint8, length/8+1), uint(length), length, 0}
 		return bitfield
 	}
 	return Bitfield{}
 }
 
 // Return true if the position `pos` is ON and false otherwise
-func (bitfield Bitfield) At(pos int) bool {
+func (bitfield *Bitfield) At(pos int) bool {
 
 	if uint(pos/8) >= bitfield.Length {
 		return false
@@ -36,11 +38,25 @@ func (bitfield Bitfield) At(pos int) bool {
 }
 
 // Sets a position ON or OFF
-func (bitfield Bitfield) Set(pos int, val bool) {
+func (bitfield *Bitfield) Set(pos int, val bool) {
 
 	if uint(pos/8) >= bitfield.Length {
 		return
 	}
+
+	currentValue := 0
+	if bitfield.At(pos) {
+		currentValue = 1
+	}
+	desiredValue := 0
+	if val {
+		desiredValue = 1
+	}
+
+	dif := currentValue - desiredValue
+
+	bitfield.ZeroBits += dif
+	bitfield.OneBits -= dif
 
 	num := bitfield.bytes[pos/8]
 	mask := uint8(1 << (7 - uint(pos%8)))
@@ -52,20 +68,43 @@ func (bitfield Bitfield) Set(pos int, val bool) {
 	bitfield.bytes[pos/8] = num
 }
 
+func countOneBits(value byte) int {
+	tempValue := value
+	oneBits := 0
+	for tempValue != 0 {
+		oneBits += int(tempValue & 1)
+		tempValue >>= 1
+	}
+	return oneBits
+}
+
 // Puts the bytes into bitfield. This isn't a regular copy , instead it or's with all bytes.
-func (bitfield Bitfield) Put(bytes []uint8, count int) {
+func (bitfield *Bitfield) Put(bytes []uint8, count int) {
 
 	if count < 0 {
 		return
 	}
 
 	for index := 0; index < count; index++ {
+
+		oldOneBits := countOneBits(bitfield.bytes[index])
+		oldZeroBits := 8 - oldOneBits
+
+		bitfield.ZeroBits -= oldZeroBits
+		bitfield.OneBits -= oldOneBits
+
 		bitfield.bytes[index] |= bytes[index]
+
+		newOneBits := countOneBits(bitfield.bytes[index])
+		newZeroBits := 8 - newOneBits
+
+		bitfield.ZeroBits += newZeroBits
+		bitfield.OneBits += newOneBits
 	}
 }
 
 // Dumps the bitfield into a human-readable form with 0 and 1
-func (bitfield Bitfield) Dump() string {
+func (bitfield *Bitfield) Dump() string {
 	var buf bytes.Buffer
 	for idx, num := range bitfield.bytes {
 		for i := 7; i >= 0; i-- {
@@ -87,7 +126,7 @@ func (bitfield Bitfield) Dump() string {
 // Dumps the bitfield into a list of bytes, where index 0
 // is the most significant bit of the first byte, and so on
 // zero-pad at the end, as needed
-func (bitfield Bitfield) Encode() []byte {
+func (bitfield *Bitfield) Encode() []byte {
 	var buf bytes.Buffer
 	for _, num := range bitfield.bytes {
 		buf.WriteByte(byte(num))

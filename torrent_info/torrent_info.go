@@ -19,6 +19,7 @@ type InfoDictionary struct {
 	RootPath      string
 	Files         []SingleFileInfo
 	MultipleFiles bool
+	TotalLength   int64
 	PieceLength   int64
 	PieceCount    int64
 	Pieces        []byte
@@ -49,6 +50,7 @@ func (torrentInfo TorrentInfo) Description() string {
 			fmt.Sprintln("Encoding :", torrentInfo.Encoding) +
 			fmt.Sprintln("Pieces : ", torrentInfo.FileInformations.PieceCount) +
 			fmt.Sprintln("Piece Length :", torrentInfo.FileInformations.PieceLength) +
+			fmt.Sprintln("Total Length :", torrentInfo.FileInformations.TotalLength) +
 			fmt.Sprintln("Private :", torrentInfo.FileInformations.Private) +
 			fmt.Sprintln("Simple Single file torrent? :", !torrentInfo.FileInformations.MultipleFiles) +
 			fmt.Sprintln("Info Hash :", string(torrentInfo.InfoHash)) +
@@ -94,6 +96,7 @@ func getFileInformationFromBencoder(decoded bencode.Bencoder, output *TorrentInf
 		case "length":
 			if data, isNumber := value.(*bencode.Number); isNumber {
 				oneFile.Length = data.Value
+				output.FileInformations.TotalLength += oneFile.Length
 			}
 		case "md5sum":
 			if data, isString := value.(*bencode.String); isString {
@@ -130,7 +133,12 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 		case "pieces":
 			if data, isString := value.(*bencode.String); isString {
 				output.FileInformations.Pieces = []byte(data.Value)
-				output.FileInformations.PieceCount = int64(len(output.FileInformations.Pieces)) / 20
+				piecesLength := len(output.FileInformations.Pieces)
+				if piecesLength%20 == 0 {
+					output.FileInformations.PieceCount = int64(piecesLength) / 20
+				} else {
+					return errors.New("Pieces is not a multiple of 20!")
+				}
 			}
 		case "private":
 			if data, isNumber := value.(*bencode.Number); isNumber {
@@ -150,6 +158,8 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 	}
 
 	if output.FileInformations.MultipleFiles {
+
+		output.FileInformations.TotalLength = 0
 
 		//We have two or more files
 		for key, value := range dictionary.Values {
@@ -185,6 +195,7 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 			case "length":
 				if data, isNumber := value.(*bencode.Number); isNumber {
 					oneFile.Length = data.Value
+					output.FileInformations.TotalLength = oneFile.Length
 				}
 			case "md5sum":
 				if data, isString := value.(*bencode.String); isString {

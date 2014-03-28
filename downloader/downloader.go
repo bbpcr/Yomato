@@ -3,12 +3,13 @@ package downloader
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
-	"encoding/binary"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/bitfield"
@@ -20,7 +21,13 @@ import (
 )
 
 const (
-	SubpieceLength = 1 << 14
+	PIECE_LENGTH = 1 << 14
+)
+
+const (
+	NOT_COMPLETED = iota
+	DOWNLOADING
+	COMPLETED
 )
 
 type Downloader struct {
@@ -28,8 +35,11 @@ type Downloader struct {
 	TorrentInfo torrent_info.TorrentInfo
 	LocalServer *local_server.LocalServer
 	PeerId      string
-	Bitfield    *bitfield.Bitfield
 	GoodPeers   []peer.Peer
+	Bitfield    *bitfield.Bitfield
+	Status      int
+
+	piecesDownloading map[int]int
 }
 
 func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) (peersCount int, err error) {
@@ -129,7 +139,7 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 		case msg, _ := <-comm:
 			peer := msg.Peer
 			newPeersList = append(newPeersList, *peer)
-			// fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", peer.BitfieldInfo, " with status : ", msg.Message)
+			fmt.Println("Peer with ID : ", msg.Peer.RemotePeerId, " HAS : ", peer.BitfieldInfo, " with status : ", msg.StatusMessage)
 		}
 	}
 
@@ -139,88 +149,69 @@ func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer 
 // StartDownloading downloads the motherfucker
 func (downloader *Downloader) StartDownloading() {
 
-	comm := downloader.FindGoodPeers()
-
-	// We send an interested message to all peers
-	downloader.SendInterestedAndUnchokedToPeers(downloader.GoodPeers)
+	if downloader.Status == DOWNLOADING {
+		return
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		panic(err)
 	}
-	writer := file_writer.New(cwd, downloader.TorrentInfo)
+	writer := file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
 	writerChan := make(chan file_writer.PieceData)
 	go writer.StartWriting(writerChan)
 
-	piecesDownloading := make(map[int]int)
+	comm := downloader.FindGoodPeers()
+
+	// We send an interested message to all peers
+	downloader.SendInterestedAndUnchokedToPeers(downloader.GoodPeers)
+
+	fmt.Println(len(downloader.GoodPeers))
 
 	var nextPiece int
 	for idx, _ := range downloader.GoodPeers {
-		nextPiece, err = downloader.GetNextPieceToDownload()
+		nextPiece, err = downloader.GetNextPieceToDownload(&downloader.GoodPeers[idx])
 		if err != nil {
 			// done
 			break
 		}
-		downloader.Bitfield.Set(nextPiece, true)
-		downloader.GoodPeers[idx].RequestPiece(comm, nextPiece, 0, SubpieceLength)
-		piecesDownloading[nextPiece] = 0
+		downloader.GoodPeers[idx].RequestPiece(comm, nextPiece, 0, PIECE_LENGTH)
+		downloader.piecesDownloading[nextPiece] = 0
 	}
 
-	piecesFinished := 0
-	for {
+	for len(downloader.piecesDownloading) > 0 {
 		select {
 		case msg, _ := <-comm:
 			receivedPeer := msg.Peer
 			msgID := msg.MessageID
 			status := msg.StatusMessage
 			if msgID == peer.REQUEST && status == "OK" {
-			
+
 				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
 				pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
 				pieceBytes := msg.BytesReceived[8:]
-			
+
 				writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, pieceBytes}
-				piecesDownloading[pieceIndex] += len(pieceBytes)
-
-				for key, val := range piecesDownloading {
+				downloader.piecesDownloading[pieceIndex] += len(pieceBytes)
+				howMany := 0
+				for key, val := range downloader.piecesDownloading {
 					fmt.Printf("%d -> %d / %d\n", key, val, downloader.TorrentInfo.FileInformations.PieceLength)
+					howMany++
 				}
-				fmt.Printf("==================\n")
 
-				if int64(piecesDownloading[pieceIndex]) >= downloader.TorrentInfo.FileInformations.PieceLength {
-					piecesFinished++
-					fmt.Printf(
-						"Pieces downloaded: %d/%d\n",
-						piecesFinished,
-						downloader.TorrentInfo.FileInformations.PieceCount,
-					)
-					delete(piecesDownloading, pieceIndex) // finished
-					nextPiece, err := downloader.GetNextPieceToDownload()
-					if err != nil {
-						break
-					}
-					downloader.Bitfield.Set(nextPiece, true)
-					piecesDownloading[nextPiece] = 0
+				downloader.launchRequest(receivedPeer, pieceIndex, comm)
 
-					if int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[pieceIndex] < SubpieceLength {
-						receivedPeer.RequestPiece(comm, nextPiece, piecesDownloading[nextPiece] , int(downloader.TorrentInfo.FileInformations.PieceLength)-piecesDownloading[pieceIndex])
-					} else {
-						receivedPeer.RequestPiece(comm, nextPiece, piecesDownloading[nextPiece] , SubpieceLength)
-					}
-				} else {
-					msg.Peer.RequestPiece(comm, pieceIndex, piecesDownloading[pieceIndex], SubpieceLength)
-				}
+				fmt.Println(fmt.Sprintf("========= Downloading : %d Downloaded Pieces : %d / %d =========", howMany, downloader.Bitfield.OneBits, downloader.Bitfield.Length))
 			} else if msgID == peer.REQUEST {
 
-				fmt.Printf(msg.StatusMessage)
+				fmt.Println(msg.StatusMessage)
 				// mark the piece as not downloaded in order for another peer to pick it up
 				// if it is an error , we received the exact parameters of what we requested , if we have some.
 				// Right now , only the request have parameters
 				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
 				//pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
 				//pieceLength := int(binary.BigEndian.Uint32(msg.BytesReceived[8:12]))
-				delete(piecesDownloading, pieceIndex)
-				downloader.Bitfield.Set(pieceIndex , false)
+				delete(downloader.piecesDownloading, pieceIndex)
 			}
 		}
 	}
@@ -230,7 +221,47 @@ func (downloader *Downloader) StartDownloading() {
 		defer downloader.GoodPeers[index].Disconnect()
 	}
 
+	downloader.Status = COMPLETED
+
 	return
+}
+
+func (downloader Downloader) launchRequest(receivedPeer *peer.Peer, pieceIndex int, comm chan peer.PeerCommunication) {
+
+	if pieceIndex == int(downloader.TorrentInfo.FileInformations.PieceCount-1) {
+		// If it's the last piece , we need to treat it better.
+		// The last piece has lesser size
+		if downloader.TorrentInfo.FileInformations.PieceCount >= 2 {
+			lastPieceLength := downloader.TorrentInfo.FileInformations.TotalLength - downloader.TorrentInfo.FileInformations.PieceLength*(downloader.TorrentInfo.FileInformations.PieceCount-1)
+			if int64(downloader.piecesDownloading[pieceIndex]) >= lastPieceLength {
+				delete(downloader.piecesDownloading, pieceIndex) // finished
+				downloader.Bitfield.Set(pieceIndex, true)
+				nextPiece, err := downloader.GetNextPieceToDownload(receivedPeer)
+				if err != nil {
+					return
+				}
+				downloader.piecesDownloading[nextPiece] = 0
+				receivedPeer.RequestPiece(comm, nextPiece, 0, PIECE_LENGTH)
+			} else {
+				receivedPeer.RequestPiece(comm, pieceIndex, downloader.piecesDownloading[pieceIndex], PIECE_LENGTH)
+			}
+		}
+
+	} else {
+
+		if int64(downloader.piecesDownloading[pieceIndex]) >= downloader.TorrentInfo.FileInformations.PieceLength {
+			delete(downloader.piecesDownloading, pieceIndex) // finished
+			downloader.Bitfield.Set(pieceIndex, true)
+			nextPiece, err := downloader.GetNextPieceToDownload(receivedPeer)
+			if err != nil {
+				return
+			}
+			downloader.piecesDownloading[nextPiece] = 0
+			receivedPeer.RequestPiece(comm, nextPiece, 0, PIECE_LENGTH)
+		} else {
+			receivedPeer.RequestPiece(comm, pieceIndex, downloader.piecesDownloading[pieceIndex], PIECE_LENGTH)
+		}
+	}
 }
 
 // New returns a Downloader from a torrent file.
@@ -259,6 +290,10 @@ func New(torrent_path string) *Downloader {
 	downloader.LocalServer = local_server.New(peerId)
 	tracker := tracker.New(torrentInfo, downloader.LocalServer.Port, peerId)
 	downloader.Tracker = tracker
+
+	downloader.piecesDownloading = make(map[int]int)
+	downloader.Status = NOT_COMPLETED
+
 	return downloader
 }
 
@@ -266,10 +301,13 @@ func New(torrent_path string) *Downloader {
 // This can use multiple strategies, e.g.
 // Sequentially (NOT good, easy for development)
 // or randomized (much better)
-func (downloader *Downloader) GetNextPieceToDownload() (int, error) {
+func (downloader *Downloader) GetNextPieceToDownload(peeR *peer.Peer) (int, error) {
 	for i := 0; i < int(downloader.Bitfield.Length); i++ {
-		if downloader.Bitfield.At(i) == false {
-			downloader.Bitfield.Set(i, true)
+		downloaderHasPiece := downloader.Bitfield.At(i)
+		peerHasPiece := peeR.BitfieldInfo.At(i)
+		_, currentlyDownloading := downloader.piecesDownloading[i]
+
+		if !downloaderHasPiece && peerHasPiece && !currentlyDownloading {
 			return i, nil
 		}
 	}
