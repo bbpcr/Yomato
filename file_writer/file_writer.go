@@ -1,9 +1,9 @@
 package file_writer
 
 import (
-	"os"
-
 	"github.com/bbpcr/Yomato/torrent_info"
+	"os"
+	"path/filepath"
 )
 
 type PieceData struct {
@@ -19,7 +19,7 @@ type Writer struct {
 }
 
 func New(root string, torrent torrent_info.TorrentInfo) Writer {
-	err := os.MkdirAll(root, 0644)
+	err := os.MkdirAll(root, 0777)
 	if err != nil {
 		panic(err)
 	}
@@ -40,17 +40,30 @@ func (writer Writer) WritePiece(file *os.File, offset int64, piece []byte) {
 }
 
 func (writer Writer) StartWriting(comm chan PieceData) {
-	files := make(map[*os.File]int64)
-	for _, filedata := range writer.TorrentInfo.FileInformations.Files {
-		filepath := writer.Root + writer.TorrentInfo.FileInformations.Files[0].Name
-		file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE, 0644)
+
+	var filesArray []*os.File
+	var folderPath string = ""
+
+	if writer.TorrentInfo.FileInformations.MultipleFiles {
+		err := os.MkdirAll(filepath.Join(writer.Root, writer.TorrentInfo.FileInformations.RootPath), 0777)
+		folderPath = writer.TorrentInfo.FileInformations.RootPath
 		if err != nil {
 			panic(err)
 		}
-		files[file] = filedata.Length
 	}
+
+	for _, fileData := range writer.TorrentInfo.FileInformations.Files {
+		fullFilepath := filepath.Join(writer.Root, folderPath, fileData.Name)
+		file, err := os.OpenFile(fullFilepath, os.O_WRONLY|os.O_CREATE, 0666)
+		if err != nil {
+			panic(err)
+		}
+		filesArray = append(filesArray, file)
+
+	}
+
 	defer (func() {
-		for file, _ := range files {
+		for _, file := range filesArray {
 			file.Close()
 		}
 	})()
@@ -61,21 +74,36 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 			if !ok {
 				return
 			}
-			offset := int64(data.PieceNumber) * writer.TorrentInfo.FileInformations.PieceLength
+			offset := int64(data.PieceNumber)*writer.TorrentInfo.FileInformations.PieceLength + int64(data.Offset)
 
 			// search the right file and offset
-			for file, size := range files {
-				if size > offset {
-					if int64(len(data.Piece)) > size-offset {
-						writer.WritePiece(file, offset, data.Piece[:size-offset])
-						data.Piece = data.Piece[:size-offset]
-						offset = 0
-					} else {
-						writer.WritePiece(file, offset, data.Piece)
-						break
-					}
+			var currentFileIndex int = 0
+
+			for index, _ := range filesArray {
+				if writer.TorrentInfo.FileInformations.Files[index].Length > offset {
+					currentFileIndex = index
+					break
+				} else {
+					offset -= writer.TorrentInfo.FileInformations.Files[index].Length
 				}
-				offset -= size
+			}
+
+			bytesToWrite := int64(len(data.Piece))
+
+			for ; bytesToWrite > 0; currentFileIndex++ {
+
+				bucketSize := writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length - offset
+				if bytesToWrite > bucketSize {
+
+					writer.WritePiece(filesArray[currentFileIndex], offset, data.Piece[:bucketSize])
+					bytesToWrite -= bucketSize
+					data.Piece = data.Piece[bucketSize:]
+					offset = 0
+
+				} else {
+					writer.WritePiece(filesArray[currentFileIndex], offset, data.Piece)
+					bytesToWrite = 0
+				}
 			}
 		}
 	}
