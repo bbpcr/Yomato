@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-	"strings"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/torrent_info"
@@ -25,19 +24,40 @@ type Tracker struct {
 
 // readPeersFromAnnouncer returns peers from announceUrl
 func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64) (bencode.Bencoder, error) {
-	protocol := announceUrl[0:3]
-	if protocol == "htt" {
+	
+	qs := url.Values{}
+	qs.Add("peer_id", peerID)
+	qs.Add("info_hash", infoHash)
+	qs.Add("port", fmt.Sprintf("%d", port))
+	qs.Add("uploaded", fmt.Sprintf("%d", uploaded))
+	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
+	qs.Add("left", fmt.Sprintf("%d", left))
+	qs.Add("event", "started")
+	
+	requestUrl , err := url.Parse(announceUrl + "?" + qs.Encode())
+	
+	if err != nil {
+		return nil , errors.New("Malformed URL")
+	}
+	
+	
+	if requestUrl.Scheme == "http" {
+	
+		//To have a timeout at request
+		//you need to set up your own Client with your own Transport 
+		//which uses a custom Dial function which wraps around DialTimeout.
+	
+		transport := http.Transport{		
+        	Dial: func(network, addr string) (net.Conn, error) {
+    				return net.DialTimeout(network, addr, 1 * time.Second)
+			}, 
+	    }
+	    
+	    client := http.Client{	    
+	        Transport: &transport,	    
+	    }	
 
-		qs := url.Values{}
-		qs.Add("peer_id", peerID)
-		qs.Add("info_hash", infoHash)
-		qs.Add("port", fmt.Sprintf("%d", port))
-		qs.Add("uploaded", fmt.Sprintf("%d", uploaded))
-		qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
-		qs.Add("left", fmt.Sprintf("%d", left))
-		qs.Add("event", "started")
-
-		response, err := http.Get(announceUrl + "?" + qs.Encode())
+		response, err := client.Get(requestUrl.String())
 
 		if err != nil {
 			return bencode.Dictionary{}, err
@@ -65,15 +85,9 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 			return newData, nil
 		}
 		return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
-	} else if protocol == "udp" {
+	} else if requestUrl.Scheme == "udp" {
 		
-		if strings.HasSuffix(announceUrl , "/announce") {
-			announceUrl = announceUrl[6 : strings.LastIndex(announceUrl, "/announce")];
-		} else {
-			announceUrl = announceUrl[6:]
-		}
-		
-		adress, err := net.ResolveUDPAddr("udp", announceUrl)
+		adress, err := net.ResolveUDPAddr("udp", requestUrl.Host)
 		fmt.Println(adress , " " , announceUrl)
 		if err != nil {
 			fmt.Println(err)
