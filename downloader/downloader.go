@@ -141,9 +141,8 @@ func (downloader *Downloader) StartDownloading() {
 				// if it is an error , we received the exact parameters of what we requested , if we have some.
 				// Right now , only the request have parameters
 				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
-				pieceLength := int(binary.BigEndian.Uint32(msg.BytesReceived[8:12]))
+				downloader.Downloaded -= int64(downloader.piecesDownloading[pieceIndex])
 				delete(downloader.piecesDownloading, pieceIndex)
-				downloader.Downloaded -= int64(pieceLength)
 				receivedPeer.Disconnect()
 				receivedPeer.EstablishFullConnection(comm)
 
