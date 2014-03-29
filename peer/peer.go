@@ -13,10 +13,10 @@ import (
 type PeerStatus int
 
 const (
-	Disconnected PeerStatus = iota
-	PendingHandshake
-	Handshaked
-	Connected
+	DISCONNECTED PeerStatus = iota
+	PENDING_HANDSHAKE
+	HANDSHAKED
+	CONNECTED
 )
 
 type PeerCommunication struct {
@@ -61,11 +61,11 @@ func (peer *Peer) GetInfo() string {
 	infoString += fmt.Sprintln("Remote peer ID length : ", len(peer.RemotePeerId))
 	infoString += fmt.Sprintln("Protocol : ", peer.Protocol)
 	switch peer.Status {
-	case Disconnected:
-		infoString += fmt.Sprintln("Status : Disconnected")
-	case Connected:
-		infoString += fmt.Sprintln("Status : Connected")
-	case PendingHandshake:
+	case DISCONNECTED:
+		infoString += fmt.Sprintln("Status : DISCONNECTED")
+	case CONNECTED:
+		infoString += fmt.Sprintln("Status : CONNECTED")
+	case PENDING_HANDSHAKE:
 		infoString += fmt.Sprintln("Status : Pending Handshake")
 	default:
 		infoString += fmt.Sprintln("Status : NONE")
@@ -136,7 +136,7 @@ func (peer *Peer) TryReadMessage(timeout time.Duration) (int, []byte, error) {
 
 // WaitForContents sends to channel comm information about downloaded content of a peer
 func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
-	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
 		// We either receive a 'bitfield' or a 'have' message.
 		go (func() {
@@ -168,7 +168,7 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 
 // SendUnchoke sends to the peer to unchoke
 func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
-	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 1}
 
@@ -194,7 +194,7 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 // SendInterested sends to the peer through the main channel that it's interested
 // Data transfer takes place whenever one side is interested and the other side is not choking
 func (peer *Peer) SendInterested(comm chan PeerCommunication) {
-	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 		go (func() {
 			buf := []byte{0, 0, 0, 1, 2}
 			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -272,7 +272,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 	bytesToBeWritten = append(bytesToBeWritten, intToBytes(begin)...)
 	bytesToBeWritten = append(bytesToBeWritten, intToBytes(length)...)
 
-	if (peer.Status == Handshaked || peer.Status == Connected) && peer.Connection != nil {
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 		go (func() {
 
 			(*peer.Connection).SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -305,7 +305,7 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 // Disconnect closes the connection of a peer.
 func (peer *Peer) Disconnect() {
 
-	peer.Status = Disconnected
+	peer.Status = DISCONNECTED
 	if peer.Connection != nil {
 		(*peer.Connection).Close()
 	}
@@ -315,10 +315,10 @@ func (peer *Peer) Disconnect() {
 
 // Handshake attempts to set up the first message transmitted by the peer, sending the response through comm
 func (peer *Peer) Handshake(comm chan PeerCommunication) {
-	if peer.Status == Disconnected || peer.Connection == nil {
+	if peer.Status == DISCONNECTED || peer.Connection == nil {
 		peer.connect(func(err error) {
 			if err == nil {
-				peer.Status = PendingHandshake
+				peer.Status = PENDING_HANDSHAKE
 				peer.Handshake(comm)
 			} else {
 
@@ -327,7 +327,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 			}
 		})
 		return
-	} else if peer.Status != PendingHandshake {
+	} else if peer.Status != PENDING_HANDSHAKE {
 		comm <- PeerCommunication{peer, nil, HANDSHAKE, fmt.Sprintf("Error:Invalid status %d", peer.Status)}
 		return
 	}
@@ -382,7 +382,7 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 
 		remotePeerId := string(resp[48:])
 
-		peer.Status = Handshaked
+		peer.Status = HANDSHAKED
 		peer.RemotePeerId = remotePeerId
 		comm <- PeerCommunication{peer, resp, HANDSHAKE, "OK"}
 	})()
@@ -423,7 +423,7 @@ func (peer *Peer) EstablishFullConnection(comm chan PeerCommunication) {
 		if msg.StatusMessage != "OK" {
 		}
 
-		peer.Status = Connected
+		peer.Status = CONNECTED
 		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "OK"}
 		return
 	})()
@@ -434,7 +434,7 @@ func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port i
 	return Peer{
 		IP:          ip,
 		Port:        port,
-		Status:      Disconnected,
+		Status:      DISCONNECTED,
 		TorrentInfo: torrentInfo,
 		LocalPeerId: peerId,
 	}
