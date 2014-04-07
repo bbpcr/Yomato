@@ -31,7 +31,7 @@ const (
 )
 
 type Downloader struct {
-	Tracker     tracker.Tracker
+	Trackers    []tracker.Tracker
 	TorrentInfo torrent_info.TorrentInfo
 	LocalServer *local_server.LocalServer
 	PeerId      string
@@ -43,49 +43,22 @@ type Downloader struct {
 	piecesDownloading map[int]int
 }
 
-func (downloader Downloader) RequestPeers(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) (peersCount int, err error) {
+func (downloader Downloader) RequestPeers(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) {
 
 	// Request the peers , from the tracker
 	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size
-	data, err := downloader.Tracker.RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
+	for trackerIndex := 0; trackerIndex < len(downloader.Trackers) ; trackerIndex++ {
+	
+		data , err := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
 
-	fmt.Println("Downloaded peers!")
-
-	if err != nil {
-		return 0, err
-	}
-	responseDictionary, responseIsDictionary := data.(*bencode.Dictionary)
-
-	if !responseIsDictionary {
-		return 0, err
-	}
-
-	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
-
-	if !peersIsList {
-		return 0, err
-	}
-
-	// At this point we have the peers as a list.
-
-	for _, peerEntry := range peers.Values {
-		peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
-		if peerDataIsDictionary {
-			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
-			port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
-			peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
-			if ipIsString && portIsNumber && peerIdIsString {
-
-				// We try to make a handshake with the peer.
-				// Results are sent on the channel comm.
-
-				newPeer := peer.New(&downloader.TorrentInfo, downloader.PeerId, ip.Value, int(port.Value))
-				newPeer.RemotePeerId = peerId.Value
-				newPeer.EstablishFullConnection(comm)
-			}
+		if err != nil {
+			continue
 		}
+
+		for peerIndex := 0; peerIndex < len(data) ; peerIndex++ {
+			data[peerIndex].EstablishFullConnection(comm)
+		}		
 	}
-	return len(peers.Values), nil
 }
 
 // StartDownloading downloads the motherfucker
@@ -106,8 +79,17 @@ func (downloader *Downloader) StartDownloading() {
 	go writer.StartWriting(writerChan)
 
 	startedTime := time.Now().Unix()
+	downloader.RequestPeers(comm, downloader.Downloaded , 0, downloader.TorrentInfo.FileInformations.TotalLength - downloader.Downloaded)
+    
+	ticker := time.NewTicker(time.Second * 20)
+    go func() {
+        for _ = range ticker.C {
+            downloader.RequestPeers(comm, downloader.Downloaded , 0, downloader.TorrentInfo.FileInformations.TotalLength - downloader.Downloaded)
+        }
+    }()
+    
+    defer ticker.Stop()
 
-	downloader.RequestPeers(comm, 0, 0, 10000)
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
@@ -125,32 +107,18 @@ func (downloader *Downloader) StartDownloading() {
 
 				writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, pieceBytes}
 				downloader.piecesDownloading[pieceIndex] += len(pieceBytes)
-				howMany := 0
-				for key, val := range downloader.piecesDownloading {
-					fmt.Printf("%d -> %d / %d\n", key, val, downloader.TorrentInfo.FileInformations.PieceLength)
-					howMany++
-				}
-
 				downloader.launchRequest(receivedPeer, pieceIndex, comm)
-
-				fmt.Println(fmt.Sprintf("========= Downloading : %d Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB Speed : %d KB/s (%.2f%%) =========", howMany, downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, (downloader.Downloaded/(time.Now().Unix()-startedTime))/1024, 100*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength)))
+				fmt.Println(fmt.Sprintf("========= Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB Speed : %d KB/s (%.2f%%) =========", downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, (downloader.Downloaded/(time.Now().Unix()-startedTime))/1024, 100*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength)))
 			} else if msgID == peer.REQUEST && status != "OK" {
-
-				fmt.Println(msg.StatusMessage)
-				// mark the piece as not downloaded in order for another peer to pick it up
-				// if it is an error , we received the exact parameters of what we requested , if we have some.
-				// Right now , only the request have parameters
 				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
 				downloader.Downloaded -= int64(downloader.piecesDownloading[pieceIndex])
 				delete(downloader.piecesDownloading, pieceIndex)
 				receivedPeer.Disconnect()
-				receivedPeer.EstablishFullConnection(comm)
 
 			} else if msgID == peer.FULL_CONNECTION && status == "OK" {
 
 				nextPiece, err := downloader.GetNextPieceToDownload(receivedPeer)
 				if err == nil {
-					downloader.GoodPeers = append(downloader.GoodPeers, *receivedPeer)
 					receivedPeer.RequestPiece(comm, nextPiece, 0, PIECE_LENGTH)
 					downloader.piecesDownloading[nextPiece] = 0
 				}
@@ -159,12 +127,7 @@ func (downloader *Downloader) StartDownloading() {
 			}
 		}
 	}
-
-	// We disconnect the peers so they dont remain connected after use
-	for index, _ := range downloader.GoodPeers {
-		defer downloader.GoodPeers[index].Disconnect()
-	}
-
+	
 	downloader.Status = COMPLETED
 
 	return
@@ -232,8 +195,15 @@ func New(torrent_path string) *Downloader {
 		Bitfield:    &bitfield,
 	}
 	downloader.LocalServer = local_server.New(peerId)
-	tracker := tracker.New(torrentInfo, downloader.LocalServer.Port, peerId)
-	downloader.Tracker = tracker
+	downloader.Trackers = make([]tracker.Tracker , 1 + len(torrentInfo.AnnounceList))
+	
+	mainTracker := tracker.New(torrentInfo.AnnounceUrl , torrentInfo , downloader.LocalServer.Port, peerId)
+	downloader.Trackers[0] = mainTracker
+	
+	for announcerIndex , announcerUrl := range torrentInfo.AnnounceList {	
+		tracker := tracker.New(announcerUrl, torrentInfo , downloader.LocalServer.Port, peerId)
+		downloader.Trackers[announcerIndex + 1] = tracker
+	}
 
 	downloader.piecesDownloading = make(map[int]int)
 	downloader.Status = NOT_COMPLETED
