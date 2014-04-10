@@ -5,15 +5,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"time"
 	"github.com/bbpcr/Yomato/torrent_info"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
-	
-	"github.com/bbpcr/Yomato/peer"
+	"time"
+
 	"github.com/bbpcr/Yomato/bencode"
+	"github.com/bbpcr/Yomato/peer"
 )
 
 type Tracker struct {
@@ -26,7 +26,7 @@ type Tracker struct {
 
 // readPeersFromAnnouncer returns peers from announceUrl
 func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64) (bencode.Bencoder, error) {
-	
+
 	qs := url.Values{}
 	qs.Add("peer_id", peerID)
 	qs.Add("info_hash", infoHash)
@@ -35,29 +35,28 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
 	qs.Add("event", "started")
-	
-	requestUrl , err := url.Parse(announceUrl + "?" + qs.Encode())
-	
+
+	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
+
 	if err != nil {
-		return nil , errors.New("Malformed URL")
+		return nil, errors.New("Malformed URL")
 	}
-	
-	
+
 	if requestUrl.Scheme == "http" {
-	
+
 		//To have a timeout at request
-		//you need to set up your own Client with your own Transport 
+		//you need to set up your own Client with your own Transport
 		//which uses a custom Dial function which wraps around DialTimeout.
-	
-		transport := http.Transport{		
-        	Dial: func(network, addr string) (net.Conn, error) {
-    				return net.DialTimeout(network, addr, 1 * time.Second)
-			}, 
-	    }
-	    
-	    client := http.Client{	    
-	        Transport: &transport,	    
-	    }	
+
+		transport := http.Transport{
+			Dial: func(network, addr string) (net.Conn, error) {
+				return net.DialTimeout(network, addr, 1*time.Second)
+			},
+		}
+
+		client := http.Client{
+			Transport: &transport,
+		}
 
 		response, err := client.Get(requestUrl.String())
 
@@ -70,7 +69,6 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		if err != nil {
 			return bencode.Dictionary{}, err
 		}
-
 
 		if response.StatusCode == 200 {
 			data, _, err := bencode.Parse(body)
@@ -88,7 +86,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		}
 		return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
 	} else if requestUrl.Scheme == "udp" {
-		
+
 		adress, err := net.ResolveUDPAddr("udp", requestUrl.Host)
 		if err != nil {
 			return bencode.Dictionary{}, err
@@ -96,7 +94,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		udpConnection, err := net.DialUDP("udp", nil, adress)
 		if err != nil {
 			return bencode.Dictionary{}, err
-		}		
+		}
 		defer udpConnection.Close()
 		// http://code.google.com/p/udpt/wiki/UDPTrackerProtocol
 
@@ -132,8 +130,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		receivedConnectionID := binary.BigEndian.Uint64(buffer[8:16])
 		if receivedAction != 0 || receivedTransactionID != 1000 {
 			return bencode.Dictionary{}, errors.New("Unable to make a connection with the udp server")
-		}		
-		
+		}
+
 		//At this point we have connected succesfully to the udp server.Now we can begin to request peers
 
 		//Step three , we send the request for peers.
@@ -241,7 +239,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 
 // RequestPeers encodes an URL, making a request to announcer then
 // returns the peers as a list.
-func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) ([]peer.Peer , error) {
+func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) ([]peer.Peer, error) {
 	peerId := tracker.PeerId
 
 	// We create the URL like this :
@@ -250,25 +248,24 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 
 	data, err := readPeersFromAnnouncer(tracker.AnnounceUrl, peerId, string(tracker.TorrentInfo.InfoHash), tracker.Port, bytesUploaded, bytesDownloaded, bytesLeft)
 	if err != nil {
-		return nil , err
+		return nil, err
 	}
 
 	responseDictionary, responseIsDictionary := data.(*bencode.Dictionary)
 
 	if !responseIsDictionary {
-		return nil , errors.New("Not a dictionary")
+		return nil, errors.New("Not a dictionary")
 	}
-	
-	
+
 	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
 
 	if !peersIsList {
-		return nil , errors.New("Not a list")
+		return nil, errors.New("Not a list")
 	}
 
 	// At this point we have the peers as a list.
-	
-	peersList := make([]peer.Peer , 0)
+
+	peersList := make([]peer.Peer, 0)
 
 	for _, peerEntry := range peers.Values {
 		peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
@@ -280,15 +277,15 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 
 				newPeer := peer.New(tracker.TorrentInfo, tracker.PeerId, ip.Value, int(port.Value))
 				newPeer.RemotePeerId = peerId.Value
-				peersList = append(peersList , newPeer)
+				peersList = append(peersList, newPeer)
 			}
 		}
 	}
-	return peersList , nil
+	return peersList, nil
 }
 
 // New returns a Tracker type with given parameters
-func New(announceUrl string , info *torrent_info.TorrentInfo, port int, peerId string) Tracker {
+func New(announceUrl string, info *torrent_info.TorrentInfo, port int, peerId string) Tracker {
 	tracker := Tracker{
 		AnnounceUrl: announceUrl,
 		TorrentInfo: info,
