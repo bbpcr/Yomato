@@ -82,21 +82,30 @@ func (peer *Peer) connect() error {
 		if err != nil {
 			continue
 		}
+		if protocol == "tcp" {
+			conn.(*net.TCPConn).SetKeepAlive(true)
+			conn.(*net.TCPConn).SetNoDelay(false)
+			conn.(*net.TCPConn).SetReadBuffer(16 * 1024)
+		} else {
+
+		}
 		peer.Connection = conn
 		return nil
 	}
 	return errors.New("Peer not available")
 }
 
-func readExactly(connection *net.Conn, buffer []byte, length int) error {
+func readExactly(connection net.Conn, buffer []byte, length int) error {
 	bytesReaded := 0
 
 	if length > len(buffer) || length < 0 {
 		return errors.New("Invalid parameters")
 	}
 
+	var readed int
+	var err error
 	for bytesReaded < length {
-		readed, err := (*connection).Read(buffer[bytesReaded:length])
+		readed, err = connection.Read(buffer[bytesReaded:length])
 		if err != nil {
 			return err
 		}
@@ -108,11 +117,11 @@ func readExactly(connection *net.Conn, buffer []byte, length int) error {
 // tryReadMessage returns (type of messasge, message, error) received by a peer
 func (peer *Peer) tryReadMessage(timeout time.Duration) (int, []byte, error) {
 
-	//First we read the first 5 bytes;
+	// First we read the first 5 bytes;
 	peer.Connection.SetReadDeadline(time.Now().Add(timeout))
 
 	buffer := make([]byte, 32*1024)
-	err := readExactly(&peer.Connection, buffer, 5)
+	err := readExactly(peer.Connection, buffer, 5)
 
 	if err != nil {
 		return -1, nil, err
@@ -123,7 +132,7 @@ func (peer *Peer) tryReadMessage(timeout time.Duration) (int, []byte, error) {
 	length := int(binary.BigEndian.Uint32(buffer[0:4]))
 	id := int(buffer[4])
 
-	err = readExactly(&peer.Connection, buffer, length-1)
+	err = readExactly(peer.Connection, buffer, length-1)
 
 	if err != nil {
 		return -1, nil, err
@@ -213,18 +222,7 @@ func (peer *Peer) sendInterested() error {
 
 func (peer *Peer) requestPiece(index int, begin int, length int) ([]byte, error) {
 
-	if length+begin > int(peer.TorrentInfo.FileInformations.PieceLength) {
-		length = int(peer.TorrentInfo.FileInformations.PieceLength) - begin
-	}
 
-	if index == int(peer.TorrentInfo.FileInformations.PieceCount-1) {
-		if peer.TorrentInfo.FileInformations.PieceCount >= 2 {
-			lastPieceLength := peer.TorrentInfo.FileInformations.TotalLength - peer.TorrentInfo.FileInformations.PieceLength*(peer.TorrentInfo.FileInformations.PieceCount-1)
-			if begin+length > int(lastPieceLength) {
-				length = int(lastPieceLength) - begin
-			}
-		}
-	}
 	bytesToBeWritten := make([]byte, 4*4+1)
 	binary.BigEndian.PutUint32(bytesToBeWritten[0:4], 13)
 	bytesToBeWritten[4] = 6
@@ -260,7 +258,7 @@ func (peer *Peer) requestPiece(index int, begin int, length int) ([]byte, error)
 	} else {
 		return bytesToBeWritten[5:], errors.New("Peer not connected")
 	}
-	return nil , nil
+	return nil, nil
 }
 
 func (peer *Peer) sendHandshake() error {

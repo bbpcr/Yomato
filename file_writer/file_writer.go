@@ -36,7 +36,6 @@ func (writer Writer) WritePiece(file *os.File, offset int64, piece []byte) {
 	if err != nil {
 		panic(err)
 	}
-	file.Sync()
 }
 
 func (writer Writer) StartWriting(comm chan PieceData) {
@@ -59,7 +58,6 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 			panic(err)
 		}
 		filesArray = append(filesArray, file)
-
 	}
 
 	defer (func() {

@@ -68,6 +68,19 @@ func (bitfield *Bitfield) Set(pos int, val bool) {
 	bitfield.bytes[pos/8] = num
 }
 
+func (bitfield *Bitfield) AndNot(otherBitfield Bitfield) *Bitfield {
+	if bitfield.Length != otherBitfield.Length {
+		panic("Bitfield size mismatch")
+	}
+	b := New(int(bitfield.Length))
+	for idx, num := range bitfield.bytes {
+		b.bytes[idx] = num & ^otherBitfield.bytes[idx]
+		b.OneBits = countOneBits(b.bytes[idx])
+		b.ZeroBits = 8 - b.OneBits
+	}
+	return &b
+}
+
 func countOneBits(value byte) int {
 	tempValue := value
 	oneBits := 0
