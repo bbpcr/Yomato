@@ -115,12 +115,12 @@ func readExactly(connection net.Conn, buffer []byte, length int) error {
 }
 
 // tryReadMessage returns (type of messasge, message, error) received by a peer
-func (peer *Peer) tryReadMessage(timeout time.Duration) (int, []byte, error) {
+func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int, []byte, error) {
 
 	// First we read the first 5 bytes;
 	peer.Connection.SetReadDeadline(time.Now().Add(timeout))
 
-	buffer := make([]byte, 32*1024)
+	buffer := make([]byte, maxBufferSize)
 	err := readExactly(peer.Connection, buffer, 5)
 
 	if err != nil {
@@ -140,12 +140,19 @@ func (peer *Peer) tryReadMessage(timeout time.Duration) (int, []byte, error) {
 	return id, buffer[0 : length-1], nil
 }
 
+// Reads all the bitfield and have messages
+// Peers should immediately send his bitfield,
+// so the client knows what pieces the peer has.
 func (peer *Peer) readExistingPieces() error {
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		// Create the bitfield with the length equal to the number of pieces
 		bitfieldInfo := bitfield.New(int(peer.TorrentInfo.FileInformations.PieceCount))
 
 		for true {
-			id, data, err := peer.tryReadMessage(1 * time.Second)
+
+			// Read exactly one message
+			id, data, err := peer.tryReadMessage(1*time.Second, int(bitfieldInfo.Length)+1)
 			if err != nil {
 				break
 			}
@@ -156,7 +163,6 @@ func (peer *Peer) readExistingPieces() error {
 				bitfieldInfo.Set(pieceIndex, true)
 			}
 		}
-
 		peer.BitfieldInfo = bitfieldInfo
 		return nil
 	} else {
@@ -166,6 +172,9 @@ func (peer *Peer) readExistingPieces() error {
 
 }
 
+// Sends and unchoke message to the peer
+// The message is exactly : [0, 0, 0, 1, 1] (first four bytes length = 1 , last byte the id of the message = 1).
+// Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendUnchoke() error {
 
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
@@ -188,13 +197,17 @@ func (peer *Peer) sendUnchoke() error {
 	return nil
 }
 
+// Sends an interested message to the peer.
+// The message is exactly : [0, 0, 0, 1, 2] (first four bytes length = 1 , last byte the id of the message = 2).
+// Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendInterested() error {
 
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
-		buf := []byte{0, 0, 0, 1, 2}
+		buf := []byte{0, 0, 0, 1, INTERESTED}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		bytesWritten, err := peer.Connection.Write(buf)
+		// Writes the byte array to the peer
 
 		if err != nil || bytesWritten < len(buf) {
 			if err != nil {
@@ -204,7 +217,9 @@ func (peer *Peer) sendInterested() error {
 			}
 		}
 
-		id, _, err := peer.tryReadMessage(1 * time.Second)
+		// Most peers response immediately with unchoke after sending an unchoke and interested,
+		// Max buffer size should be 5 because unchoke size is 5.
+		id, _, err := peer.tryReadMessage(1*time.Second, 5)
 
 		if err != nil || id != UNCHOKE {
 			if err != nil {
@@ -220,51 +235,102 @@ func (peer *Peer) sendInterested() error {
 	return nil
 }
 
-func (peer *Peer) requestPiece(index int, begin int, length int) ([]byte, error) {
+// Request multiple blocks on the peers
+// Parameters are like this : an array multiple of three,
+// [index1, begin1, length1, index2, begin2, length2,...] and so on..
+// This writes the byte form of the input on the connection
+func (peer *Peer) WriteRequest(params []int) error {
+	requestBytes := []byte{}
 
+	// Start creating the bytes for the request
 
-	bytesToBeWritten := make([]byte, 4*4+1)
-	binary.BigEndian.PutUint32(bytesToBeWritten[0:4], 13)
-	bytesToBeWritten[4] = 6
-	binary.BigEndian.PutUint32(bytesToBeWritten[5:9], uint32(index))
-	binary.BigEndian.PutUint32(bytesToBeWritten[9:13], uint32(begin))
-	binary.BigEndian.PutUint32(bytesToBeWritten[13:], uint32(length))
+	for request := 0; request < len(params); request += 3 {
+
+		signatureBytes := make([]byte, 5)
+		binary.BigEndian.PutUint32(signatureBytes[0:4], 13)
+		signatureBytes[4] = REQUEST
+		// The first 4 bytes are the length of one request which is 13 = sizeof(ID) + sizeof(index) + sizeof(begin) + sizeof(length)
+		requestBytes = append(requestBytes, signatureBytes...)
+		requestBytes = append(requestBytes, convertIntsToByteArray(params[request], params[request+1], params[request+2])...)
+		// We create one big byte array containing all the requests
+	}
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		_, err := peer.Connection.Write(requestBytes)
+		return err
+	} else {
+		return errors.New("Peer not connected")
+	}
+}
+
+// This converts an array of ints into a byte array
+// ex : input [567 , 8978] -> output [0 0 2 55 0 0 35 18]
+func convertIntsToByteArray(params ...int) []byte {
+	buffer := make([]byte, 4*len(params))
+	for index := 0; index < 4*len(params); index += 4 {
+		binary.BigEndian.PutUint32(buffer[index:index+4], uint32(params[index/4]))
+	}
+	return buffer
+}
+
+// Reads the piece messages from the connection
+// and returns the bytes like this : [<index1><begin1><length1><block1><index2><begin2><length2><block2>]
+// This function always returs the input parameters in the end with length 0. This helps for unmarking the downloading blocks.
+func (peer *Peer) readBlocks(params []int) ([]byte, error) {
+
+	queue_length := len(params) / 3
 
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(bytesToBeWritten)
+		receivedBytes := []byte{}
 
-		if err != nil || bytesWritten < len(bytesToBeWritten) {
+		for request := 0; request < queue_length; request++ {
 
+			// Read on message from the connection , using a 17kb buffer. (One message cannot be higher than 17kb)
+			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
+			// If it encounters an error , then we stop reading.
 			if err != nil {
-				return bytesToBeWritten[5:], err
-			} else {
-				return bytesToBeWritten[5:], errors.New("Insufficient bytes written")
+				break
 			}
+			if id == PIECE {
+				receivedBytes = append(receivedBytes, data[0:8]...)
+				receivedBytes = append(receivedBytes, convertIntsToByteArray(len(data[8:]))...)
+				receivedBytes = append(receivedBytes, data[8:]...)
+			}
+			// Append the bytes
 		}
 
-		id, data, err := peer.tryReadMessage(1 * time.Second)
-
-		if err != nil || id != PIECE {
-			if err != nil {
-				return bytesToBeWritten[5:], err
-			} else {
-				return bytesToBeWritten[5:], errors.New("Didn't receive a piece")
-			}
+		// Always append the input parameters to the result.
+		for request := 0; request < len(params); request += 3 {
+			receivedBytes = append(receivedBytes, convertIntsToByteArray(params[request], params[request+1], 0)...)
 		}
-		return data, nil
+
+		// If the length of bytes received is 12 (we didn't read anything)
+		// this returns also an error, so we know to handle the peer differently
+		if len(receivedBytes) == 12*queue_length {
+			return receivedBytes, errors.New("Nothing readed")
+		} else {
+			return receivedBytes, nil
+		}
 
 	} else {
-		return bytesToBeWritten[5:], errors.New("Peer not connected")
+		receivedBytes := []byte{}
+		for request := 0; request < 3*queue_length; request += 3 {
+			receivedBytes = append(receivedBytes, convertIntsToByteArray(params[request], params[request+1], 0)...)
+		}
+		return receivedBytes, errors.New("Peer not connected")
 	}
 	return nil, nil
 }
 
+// Sends a handshake to the peer.
+// This is mandatory to call this first , when initializing a connection with the peer,
+// because it won't response to any message until a handshake has been done.
 func (peer *Peer) sendHandshake() error {
 
 	if peer.Status == DISCONNECTED {
-
+		//If the peer is disconnected,
+		//it connects to the ip and port that we have.
 		err := peer.connect()
 		if err == nil {
 			peer.Status = PENDING_HANDSHAKE
@@ -276,6 +342,11 @@ func (peer *Peer) sendHandshake() error {
 
 	} else if peer.Status == PENDING_HANDSHAKE {
 
+		// At this point , it is connected to the peer.
+		// It will send a byte array like this :
+		// <protocolStringLength><protocolString><reservedBytes><infoHash><peerID>
+		// with exactly (48 + protocolStringLength) bytes
+
 		protocolString := "BitTorrent protocol"
 		handshake := make([]byte, 0, 48+len(protocolString))
 		handshake = append(handshake, byte(19))
@@ -285,6 +356,7 @@ func (peer *Peer) sendHandshake() error {
 		handshake = append(handshake, []byte(peer.LocalPeerId)...)
 
 		peer.Connection.SetDeadline(time.Now().Add(5 * time.Second))
+		// Set a higher timeout, because some peers respond slower at handshake.
 		bytesWritten, err := peer.Connection.Write(handshake)
 
 		if err != nil || bytesWritten < len(handshake) {
@@ -297,19 +369,16 @@ func (peer *Peer) sendHandshake() error {
 			}
 		}
 
+		// At this point , the peer should send us exactly the same size that we requested.
 		resp := make([]byte, len(handshake))
-		bytesRead, err := peer.Connection.Read(resp)
+		err = readExactly(peer.Connection, resp, len(resp))
 
-		if err != nil || bytesRead < len(resp) {
-
+		if err != nil {
 			peer.Disconnect()
-			if err != nil {
-				return err
-			} else {
-				return errors.New("Insufficient bytes read")
-			}
+			return err
 		}
 
+		// Some peers send wrong protocol , so we disconnect it.
 		protocol := resp[1:20]
 		peer.Protocol = string(protocol)
 		if string(protocol) != protocolString {
@@ -329,7 +398,6 @@ func (peer *Peer) sendHandshake() error {
 	return nil
 }
 
-// WaitForContents sends to channel comm information about downloaded content of a peer
 func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 
 	err := peer.readExistingPieces()
@@ -341,7 +409,6 @@ func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
 	return
 }
 
-// SendUnchoke sends to the peer to unchoke
 func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 
 	err := peer.sendUnchoke()
@@ -353,8 +420,6 @@ func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
 	return
 }
 
-// SendInterested sends to the peer through the main channel that it's interested
-// Data transfer takes place whenever one side is interested and the other side is not choking
 func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 
 	err := peer.sendInterested()
@@ -366,11 +431,9 @@ func (peer *Peer) SendInterested(comm chan PeerCommunication) {
 	return
 }
 
-// RequestPiece makes a request to tracker to obtain 'length' bytes from 'begin'
-// the data is sent to channel 'comm'.
-func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int, length int) {
+func (peer *Peer) ReadBlocks(comm chan PeerCommunication, params []int) {
 
-	data, err := peer.requestPiece(index, begin, length)
+	data, err := peer.readBlocks(params)
 	if err != nil {
 		comm <- PeerCommunication{peer, data, REQUEST, "ERROR:" + err.Error()}
 		return
@@ -379,7 +442,8 @@ func (peer *Peer) RequestPiece(comm chan PeerCommunication, index int, begin int
 	return
 }
 
-// Disconnect closes the connection of a peer.
+// Disconnect closes the connection of a peer,
+// and sets the status to DISCONNECTED.
 func (peer *Peer) Disconnect() {
 
 	peer.Status = DISCONNECTED
@@ -390,7 +454,6 @@ func (peer *Peer) Disconnect() {
 	return
 }
 
-// Handshake attempts to set up the first message transmitted by the peer, sending the response through comm
 func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	err := peer.sendHandshake()
 	if err != nil {
@@ -401,6 +464,9 @@ func (peer *Peer) Handshake(comm chan PeerCommunication) {
 	return
 }
 
+// Establishes full connection with the peer.
+// Full connection means : handshake , reading the bitfield and
+// sending unchoke and interested to the peer.
 func (peer *Peer) EstablishFullConnection(comm chan PeerCommunication) {
 
 	if peer.Status == CONNECTED || peer.Status == PENDING_HANDSHAKE || peer.Status == HANDSHAKED {
