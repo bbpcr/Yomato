@@ -9,17 +9,17 @@ import (
 type Bitfield struct {
 	bytes    []uint8
 	Length   uint
-	ZeroBits int
-	OneBits  int
+	ZeroBits uint
+	OneBits  uint
 }
 
 func New(length int) Bitfield {
 
 	if length%8 == 0 {
-		bitfield := Bitfield{make([]uint8, length/8), uint(length), length, 0}
+		bitfield := Bitfield{make([]uint8, length/8), uint(length), uint(length), 0}
 		return bitfield
 	} else {
-		bitfield := Bitfield{make([]uint8, length/8+1), uint(length), length, 0}
+		bitfield := Bitfield{make([]uint8, length/8+1), uint(length), uint(length), 0}
 		return bitfield
 	}
 	return Bitfield{}
@@ -55,8 +55,8 @@ func (bitfield *Bitfield) Set(pos int, val bool) {
 
 	dif := currentValue - desiredValue
 
-	bitfield.ZeroBits += dif
-	bitfield.OneBits -= dif
+	bitfield.ZeroBits = uint(int(bitfield.ZeroBits) + dif)
+	bitfield.OneBits = uint(int(bitfield.OneBits) - dif)
 
 	num := bitfield.bytes[pos/8]
 	mask := uint8(1 << (7 - uint(pos%8)))
@@ -81,11 +81,11 @@ func (bitfield *Bitfield) AndNot(otherBitfield Bitfield) *Bitfield {
 	return &b
 }
 
-func countOneBits(value byte) int {
+func countOneBits(value byte) uint {
 	tempValue := value
-	oneBits := 0
+	oneBits := uint(0)
 	for tempValue != 0 {
-		oneBits += int(tempValue & 1)
+		oneBits += uint(tempValue & 1)
 		tempValue >>= 1
 	}
 	return oneBits

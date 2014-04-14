@@ -15,9 +15,9 @@ import (
 	"github.com/bbpcr/Yomato/file_writer"
 	"github.com/bbpcr/Yomato/local_server"
 	"github.com/bbpcr/Yomato/peer"
+	"github.com/bbpcr/Yomato/piece_manager"
 	"github.com/bbpcr/Yomato/torrent_info"
 	"github.com/bbpcr/Yomato/tracker"
-	"github.com/bbpcr/Yomato/piece_manager"
 )
 
 const (
@@ -25,8 +25,6 @@ const (
 	DOWNLOADING
 	COMPLETED
 )
-
-
 
 type Downloader struct {
 	Trackers    []tracker.Tracker
@@ -79,6 +77,7 @@ func (downloader *Downloader) StartDownloading() {
 	startedTime := time.Now()
 	downloader.RequestPeers(comm, downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
 
+	peers := 0
 	ticker := time.NewTicker(time.Second * 1)
 	go func() {
 		var lastDownloaded int64 = 0
@@ -87,7 +86,7 @@ func (downloader *Downloader) StartDownloading() {
 			seconds++
 			downloader.Speed = float64(downloader.Downloaded-lastDownloaded) / 1024.0
 			lastDownloaded = downloader.Downloaded
-			fmt.Println(fmt.Sprintf("========= Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds =========", downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
+			fmt.Println(fmt.Sprintf("=========Peers : %d Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds =========", peers, downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 10 {
 				go downloader.RequestPeers(comm, downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
 				seconds = 0
@@ -95,11 +94,8 @@ func (downloader *Downloader) StartDownloading() {
 		}
 	}()
 
-	
 	defer ticker.Stop()
-	
-	
-	peers := 0
+
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
 		case msg, _ := <-comm:
@@ -108,42 +104,20 @@ func (downloader *Downloader) StartDownloading() {
 			status := msg.StatusMessage
 			if msgID == peer.REQUEST && status == "OK" {
 
-				pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
-				pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
-				pieceBytes := msg.BytesReceived[8:]
-				
-				blockIndex := downloader.Manager.GetBlockIndex(pieceIndex , pieceOffset)
-				downloader.Manager.BlockBytes[blockIndex] -= len(pieceBytes)
-				downloader.Manager.BlockDownloading[blockIndex] = false
-				downloader.Manager.PieceBytes[pieceIndex] += len(pieceBytes)
-				downloader.Downloaded += int64(len(pieceBytes))
-
-				writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, pieceBytes}
-				downloader.checkPieceCompleted(blockIndex, pieceIndex)
-				fiveBlocks := downloader.Manager.GetNext5BlocksToDownload(receivedPeer)
-				if fiveBlocks != nil {
-					go receivedPeer.RequestPiece(comm, downloader.Manager.BlockPiece[fiveBlocks[0]] , downloader.Manager.BlockOffset[fiveBlocks[0]] , downloader.Manager.BlockBytes[fiveBlocks[0]])
-					downloader.Manager.BlockDownloading[fiveBlocks[0]] = true
-				}
+				downloader.parseRequest(receivedPeer, msg.BytesReceived, writerChan)
+				downloader.startRequesting(comm, receivedPeer)
 
 			} else if msgID == peer.REQUEST && status != "OK" {
-			
-					pieceIndex := int(binary.BigEndian.Uint32(msg.BytesReceived[0:4]))
-					pieceOffset := int(binary.BigEndian.Uint32(msg.BytesReceived[4:8]))
-					blockIndex := downloader.Manager.GetBlockIndex(pieceIndex , pieceOffset)
-					downloader.Manager.BlockDownloading[blockIndex] = false
-					receivedPeer.Disconnect()
-					
+
+				downloader.parseRequest(receivedPeer, msg.BytesReceived, writerChan)
+				receivedPeer.Disconnect()
+				peers--
+				go receivedPeer.EstablishFullConnection(comm)
+
 			} else if msgID == peer.FULL_CONNECTION && status == "OK" {
-			
+
 				peers++
-				fiveBlocks := downloader.Manager.GetNext5BlocksToDownload(receivedPeer)
-				if fiveBlocks != nil {
-					go receivedPeer.RequestPiece(comm, downloader.Manager.BlockPiece[fiveBlocks[0]] , downloader.Manager.BlockOffset[fiveBlocks[0]] , downloader.Manager.BlockBytes[fiveBlocks[0]])
-					downloader.Manager.BlockDownloading[fiveBlocks[0]] = true
-				} else {
-				
-				}
+				downloader.startRequesting(comm, receivedPeer)
 
 			} else if msgID == peer.FULL_CONNECTION && status != "OK" {
 			}
@@ -154,25 +128,64 @@ func (downloader *Downloader) StartDownloading() {
 	return
 }
 
-func (downloader Downloader) checkPieceCompleted(blockIndex int, pieceIndex int) {
-
-	if pieceIndex == int(downloader.TorrentInfo.FileInformations.PieceCount-1) {
-		// If it's the last piece , we need to treat it better.
-		// The last piece has lesser size
-		if downloader.TorrentInfo.FileInformations.PieceCount >= 2 {
-			lastPieceLength := downloader.TorrentInfo.FileInformations.TotalLength - downloader.TorrentInfo.FileInformations.PieceLength*(downloader.TorrentInfo.FileInformations.PieceCount-1)
-			if int64(downloader.Manager.PieceBytes[pieceIndex]) >= lastPieceLength {
-				//Finished
-				downloader.Bitfield.Set(pieceIndex, true)
-			}
+func (downloader *Downloader) startRequesting(comm chan peer.PeerCommunication, receivedPeer *peer.Peer) {
+	now := time.Now()
+	requestParams := []int{}
+	for time.Since(now) <= 20*time.Microsecond {
+		fiveBlocks := downloader.Manager.GetNextBlocksToDownload(receivedPeer, 5)
+		if fiveBlocks == nil {
+			break
 		}
-
-	} else if int64(downloader.Manager.PieceBytes[pieceIndex]) >= downloader.TorrentInfo.FileInformations.PieceLength {
-		//Finished
-		downloader.Bitfield.Set(pieceIndex , true)
+		smallParams := []int{}
+		for block := 0; block < len(fiveBlocks); block++ {
+			downloader.Manager.BlockDownloading[fiveBlocks[block]] = true
+			smallParams = append(smallParams, downloader.Manager.BlockPiece[fiveBlocks[block]], downloader.Manager.BlockOffset[fiveBlocks[block]], downloader.Manager.BlockBytes[fiveBlocks[block]])
+		}
+		err := receivedPeer.WriteRequest(smallParams)
+		requestParams = append(requestParams, smallParams...)
+		if err != nil {
+			break
+		}
+	}
+	if requestParams != nil {
+		go receivedPeer.ReadBlocks(comm, requestParams)
+	} else {
+		receivedPeer.Disconnect()
 	}
 }
 
+func (downloader *Downloader) showRemainingBlocks() {
+	for key, value := range downloader.Manager.BlockBytes {
+		if value != 0 {
+			fmt.Println(key, ":", downloader.Manager.BlockPiece[key], ":", value)
+		}
+	}
+}
+
+func (downloader *Downloader) parseRequest(receivedPeer *peer.Peer, data []byte, writerChan chan file_writer.PieceData) {
+	index := 0
+	for index < len(data) {
+
+		pieceIndex := int(binary.BigEndian.Uint32(data[index : index+4]))
+		pieceOffset := int(binary.BigEndian.Uint32(data[index+4 : index+8]))
+		pieceLength := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
+		blockIndex := downloader.Manager.GetBlockIndex(pieceIndex, pieceOffset)
+		index += 12
+
+		if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
+
+			downloader.Manager.BlockBytes[blockIndex] -= pieceLength
+			downloader.Manager.PieceBytes[pieceIndex] += pieceLength
+			downloader.Downloaded += int64(pieceLength)
+			writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, data[index : index+pieceLength]}
+		}
+		if downloader.Manager.IsPieceCompleted(pieceIndex, &downloader.TorrentInfo) {
+			downloader.Bitfield.Set(pieceIndex, true)
+		}
+		index += pieceLength
+		downloader.Manager.BlockDownloading[blockIndex] = false
+	}
+}
 
 // New returns a Downloader from a torrent file.
 func New(torrent_path string) *Downloader {
@@ -209,10 +222,9 @@ func New(torrent_path string) *Downloader {
 	}
 	downloader.Status = NOT_COMPLETED
 	downloader.Manager = piece_manager.New(torrentInfo)
-	
+
 	return downloader
 }
-
 
 func createPeerId() string {
 	const idSize = 20

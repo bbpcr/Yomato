@@ -53,6 +53,10 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 
 	for _, fileData := range writer.TorrentInfo.FileInformations.Files {
 		fullFilepath := filepath.Join(writer.Root, folderPath, fileData.Name)
+		err := os.MkdirAll(filepath.Dir(fullFilepath), 0777)
+		if err != nil {
+			panic(err)
+		}
 		file, err := os.OpenFile(fullFilepath, os.O_WRONLY|os.O_CREATE, 0666)
 		if err != nil {
 			panic(err)
