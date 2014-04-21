@@ -1,4 +1,3 @@
-
 // Package torrent_info gathers all the info from a given Bencoder Object
 // All you need to know is the GetInfoFromBencoder() function
 package torrent_info
@@ -152,7 +151,7 @@ func getInfoDictionaryFromBencoder(decoded bencode.Bencoder, output *TorrentInfo
 
 	if output.FileInformations.MultipleFiles {
 
-        //We have two or more files
+		//We have two or more files
 		for key, value := range dictionary.Values {
 			switch key.Value {
 			case "name":

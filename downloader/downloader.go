@@ -1,4 +1,3 @@
-
 // Package downloader implements basic functions for downloading a torrent file
 package downloader
 
@@ -37,7 +36,7 @@ func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.Peer
 		return 0, err
 	}
 
-	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
+	peers, peersIsList := responseDictionary.Values[bencode.String{Value: "peers"}].(*bencode.List)
 
 	if !peersIsList {
 		return 0, err
@@ -48,9 +47,9 @@ func (downloader Downloader) RequestPeersAndRequestHandshake(comm chan peer.Peer
 	for _, peerEntry := range peers.Values {
 		peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
 		if peerDataIsDictionary {
-			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
-			port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
-			peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
+			ip, ipIsString := peerData.Values[bencode.String{Value: "ip"}].(*bencode.String)
+			port, portIsNumber := peerData.Values[bencode.String{Value: "port"}].(*bencode.Number)
+			peerId, peerIdIsString := peerData.Values[bencode.String{Value: "peer id"}].(*bencode.String)
 			if ipIsString && portIsNumber && peerIdIsString {
 
 				// We try to make a handshake with the peer.
@@ -106,7 +105,7 @@ func (downloader Downloader) SendInterestedAndUnchokedToPeers(peersList []peer.P
 func (downloader Downloader) GetFileContents(peersList []peer.Peer) []peer.Peer {
 	comm := make(chan peer.PeerCommunication)
 
-    // Next 2 lines wouldn't be better if integrated in a go func() ?
+	// Next 2 lines wouldn't be better if integrated in a go func() ?
 	for index, _ := range peersList {
 		peersList[index].WaitForContents(comm)
 	}

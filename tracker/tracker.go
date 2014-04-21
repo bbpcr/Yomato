@@ -24,7 +24,7 @@ type Tracker struct {
 
 // readPeersFromAnnouncer returns peers from announceUrl
 func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64) (bencode.Bencoder, error) {
-	
+
 	qs := url.Values{}
 	qs.Add("peer_id", peerID)
 	qs.Add("info_hash", infoHash)
@@ -33,29 +33,28 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
 	qs.Add("event", "started")
-	
-	requestUrl , err := url.Parse(announceUrl + "?" + qs.Encode())
-	
+
+	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
+
 	if err != nil {
-		return nil , errors.New("Malformed URL")
+		return nil, errors.New("Malformed URL")
 	}
-	
-	
+
 	if requestUrl.Scheme == "http" {
-	
+
 		//To have a timeout at request
-		//you need to set up your own Client with your own Transport 
+		//you need to set up your own Client with your own Transport
 		//which uses a custom Dial function which wraps around DialTimeout.
-	
-		transport := http.Transport{		
-        	Dial: func(network, addr string) (net.Conn, error) {
-    				return net.DialTimeout(network, addr, 1 * time.Second)
-			}, 
-	    }
-	    
-	    client := http.Client{	    
-	        Transport: &transport,	    
-	    }	
+
+		transport := http.Transport{
+			Dial: func(network, addr string) (net.Conn, error) {
+				return net.DialTimeout(network, addr, 1*time.Second)
+			},
+		}
+
+		client := http.Client{
+			Transport: &transport,
+		}
 
 		response, err := client.Get(requestUrl.String())
 
@@ -86,9 +85,9 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		}
 		return bencode.Dictionary{}, errors.New(fmt.Sprintf("Expected 200 OK from tracker; got %s", response.Status))
 	} else if requestUrl.Scheme == "udp" {
-		
+
 		adress, err := net.ResolveUDPAddr("udp", requestUrl.Host)
-		fmt.Println(adress , " " , announceUrl)
+		fmt.Println(adress, " ", announceUrl)
 		if err != nil {
 			fmt.Println(err)
 			return bencode.Dictionary{}, err
@@ -97,6 +96,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		if err != nil {
 			return bencode.Dictionary{}, err
 		}
+		defer udpConnection.Close()
 		// http://code.google.com/p/udpt/wiki/UDPTrackerProtocol
 
 		// First step. We make ourself known.
@@ -131,8 +131,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		receivedConnectionID := binary.BigEndian.Uint64(buffer[8:16])
 		if receivedAction != 0 || receivedTransactionID != 1000 {
 			return bencode.Dictionary{}, errors.New("Unable to make a connection with the udp server")
-		}		
-		
+		}
+
 		//At this point we have connected succesfully to the udp server.Now we can begin to request peers
 
 		//Step three , we send the request for peers.
@@ -222,11 +222,11 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 
 		announceInterval := new(bencode.String)
 		announceInterval.Value = fmt.Sprintf("%d", peersAnnounceInterval)
-		bigDictionary.Values[bencode.String{"interval"}] = announceInterval
+		bigDictionary.Values[bencode.String{Value: "interval"}] = announceInterval
 
 		peersList := new(bencode.String)
 		peersList.Value = string(bigBuffer[20:])
-		bigDictionary.Values[bencode.String{"peers"}] = peersList
+		bigDictionary.Values[bencode.String{Value: "peers"}] = peersList
 
 		perfectDictionary, err := GetPeers(bigDictionary)
 
@@ -234,7 +234,6 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 			return bencode.Dictionary{}, errors.New("Malformed dictionary")
 		}
 		return perfectDictionary, nil
-		defer udpConnection.Close()
 	}
 	return bencode.Dictionary{}, errors.New("No known protocol")
 }
