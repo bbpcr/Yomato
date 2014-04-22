@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bbpcr/Yomato/bitfield"
+	"github.com/bbpcr/Yomato/file_writer"
 	"github.com/bbpcr/Yomato/torrent_info"
 )
 
@@ -20,11 +21,16 @@ const (
 	CONNECTED
 )
 
-type PeerCommunication struct {
+type ConnectionCommunication struct {
 	Peer          *Peer
-	BytesReceived []byte
-	MessageID     int
 	StatusMessage string
+}
+
+type RequestCommunication struct {
+	Peer     *Peer
+	Pieces   []file_writer.PieceData
+	NumGood  int
+	NumEmpty int
 }
 
 type Peer struct {
@@ -40,18 +46,17 @@ type Peer struct {
 }
 
 const (
-	CHOKE           = 0
-	UNCHOKE         = 1
-	INTERESTED      = 2
-	NOT_INTERESTED  = 3
-	HAVE            = 4
-	BITFIELD        = 5
-	REQUEST         = 6
-	PIECE           = 7
-	CANCEL          = 8
-	PORT            = 9
-	HANDSHAKE       = 10
-	FULL_CONNECTION = 11
+	CHOKE          = 0
+	UNCHOKE        = 1
+	INTERESTED     = 2
+	NOT_INTERESTED = 3
+	HAVE           = 4
+	BITFIELD       = 5
+	REQUEST        = 6
+	PIECE          = 7
+	CANCEL         = 8
+	PORT           = 9
+	HANDSHAKE      = 10
 )
 
 // GetInfo return a string consisting of peer status
@@ -165,10 +170,8 @@ func (peer *Peer) readExistingPieces() error {
 		}
 		peer.BitfieldInfo = bitfieldInfo
 		return nil
-	} else {
-		return errors.New("Peer not connected")
 	}
-	return nil
+	return errors.New("Peer not connected")
 
 }
 
@@ -191,10 +194,8 @@ func (peer *Peer) sendUnchoke() error {
 			}
 		}
 		return nil
-	} else {
-		return errors.New("Peer not connected")
 	}
-	return nil
+	return errors.New("Peer not connected")
 }
 
 // Sends an interested message to the peer.
@@ -229,10 +230,8 @@ func (peer *Peer) sendInterested() error {
 			}
 		}
 		return nil
-	} else {
-		return errors.New("Peer not connected")
 	}
-	return nil
+	return errors.New("Peer not connected")
 }
 
 // Request multiple blocks on the peers
@@ -258,10 +257,8 @@ func (peer *Peer) WriteRequest(params []int) error {
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		_, err := peer.Connection.Write(requestBytes)
 		return err
-	} else {
-		return errors.New("Peer not connected")
 	}
-	return nil
+	return errors.New("Peer not connected")
 }
 
 // This converts an array of ints into a byte array
@@ -277,15 +274,13 @@ func convertIntsToByteArray(params ...int) []byte {
 // Reads the piece messages from the connection
 // and returns the bytes like this : [<index1><begin1><length1><block1><index2><begin2><length2><block2>]
 // This function always returs the input parameters in the end with length 0. This helps for unmarking the downloading blocks.
-func (peer *Peer) readBlocks(params []int) ([]byte, error) {
-
-	queue_length := len(params) / 3
+func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
 
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
 		receivedBytes := []byte{}
 
-		for request := 0; request < queue_length; request++ {
+		for request := 0; request < maxBlocks; request++ {
 
 			// Read on message from the connection , using a 17kb buffer. (One message cannot be higher than 17kb)
 			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
@@ -301,27 +296,15 @@ func (peer *Peer) readBlocks(params []int) ([]byte, error) {
 			// Append the bytes
 		}
 
-		// Always append the input parameters to the result.
-		for request := 0; request < len(params); request += 3 {
-			receivedBytes = append(receivedBytes, convertIntsToByteArray(params[request], params[request+1], 0)...)
-		}
-
-		// If the length of bytes received is 12 (we didn't read anything)
+		// If the length of bytes received is 0 (we didn't read anything)
 		// this returns also an error, so we know to handle the peer differently
-		if len(receivedBytes) == 12*queue_length {
-			return receivedBytes, errors.New("Nothing readed")
+		if len(receivedBytes) == 0 {
+			return nil, errors.New("Nothing readed")
 		} else {
 			return receivedBytes, nil
 		}
-
-	} else {
-		receivedBytes := []byte{}
-		for request := 0; request < 3*queue_length; request += 3 {
-			receivedBytes = append(receivedBytes, convertIntsToByteArray(params[request], params[request+1], 0)...)
-		}
-		return receivedBytes, errors.New("Peer not connected")
 	}
-	return nil, nil
+	return nil, errors.New("Peer not connected")
 }
 
 // Sends a handshake to the peer.
@@ -393,53 +376,51 @@ func (peer *Peer) sendHandshake() error {
 		peer.Status = HANDSHAKED
 		peer.RemotePeerId = remotePeerId
 		return nil
-	} else {
-		return errors.New("Invalid status")
 	}
-	return nil
+	return errors.New("Invalid status")
 }
 
-func (peer *Peer) ReadExistingPieces(comm chan PeerCommunication) {
-
-	err := peer.readExistingPieces()
-	if err != nil {
-		comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode(), BITFIELD, "ERROR:" + err.Error()}
-		return
-	}
-	comm <- PeerCommunication{peer, peer.BitfieldInfo.Encode(), BITFIELD, "OK"}
-	return
+func (peer *Peer) SendUnchoke() error {
+	return peer.sendUnchoke()
 }
 
-func (peer *Peer) SendUnchoke(comm chan PeerCommunication) {
-
-	err := peer.sendUnchoke()
-	if err != nil {
-		comm <- PeerCommunication{peer, nil, UNCHOKE, "ERROR:" + err.Error()}
-		return
-	}
-	comm <- PeerCommunication{peer, nil, UNCHOKE, "OK"}
-	return
+func (peer *Peer) SendInterested() error {
+	return peer.sendInterested()
 }
 
-func (peer *Peer) SendInterested(comm chan PeerCommunication) {
+func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 
-	err := peer.sendInterested()
-	if err != nil {
-		comm <- PeerCommunication{peer, nil, INTERESTED, "ERROR:" + err.Error()}
-		return
+	data, err := peer.readBlocks(len(params) / 3)
+	index := 0
+	message := RequestCommunication{
+		Peer:     peer,
+		Pieces:   nil,
+		NumGood:  0,
+		NumEmpty: 0,
 	}
-	comm <- PeerCommunication{peer, nil, INTERESTED, "OK"}
-	return
-}
+	for err == nil && index < len(data) {
 
-func (peer *Peer) ReadBlocks(comm chan PeerCommunication, params []int) {
-
-	data, err := peer.readBlocks(params)
-	if err != nil {
-		comm <- PeerCommunication{peer, data, REQUEST, "ERROR:" + err.Error()}
-		return
+		var pieceData file_writer.PieceData
+		pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[index : index+4]))
+		pieceData.Offset = int(binary.BigEndian.Uint32(data[index+4 : index+8]))
+		pieceLength := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
+		index += 12
+		pieceData.Piece = data[index : index+pieceLength]
+		index += pieceLength
+		message.Pieces = append(message.Pieces, pieceData)
+		message.NumGood++
 	}
-	comm <- PeerCommunication{peer, data, REQUEST, "OK"}
+
+	//fmt.Println(message.Pieces)
+	for request := 0; request < len(params); request += 3 {
+		var pieceData file_writer.PieceData
+		pieceData.PieceNumber = params[request]
+		pieceData.Offset = params[request+1]
+		pieceData.Piece = nil
+		message.Pieces = append(message.Pieces, pieceData)
+		message.NumEmpty++
+	}
+	comm <- message
 	return
 }
 
@@ -455,20 +436,10 @@ func (peer *Peer) Disconnect() {
 	return
 }
 
-func (peer *Peer) Handshake(comm chan PeerCommunication) {
-	err := peer.sendHandshake()
-	if err != nil {
-		comm <- PeerCommunication{peer, nil, HANDSHAKE, "ERROR:" + err.Error()}
-		return
-	}
-	comm <- PeerCommunication{peer, nil, HANDSHAKE, "OK"}
-	return
-}
-
 // Establishes full connection with the peer.
 // Full connection means : handshake , reading the bitfield and
 // sending unchoke and interested to the peer.
-func (peer *Peer) EstablishFullConnection(comm chan PeerCommunication) {
+func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 
 	if peer.Status == CONNECTED || peer.Status == PENDING_HANDSHAKE || peer.Status == HANDSHAKED {
 		return
@@ -476,33 +447,33 @@ func (peer *Peer) EstablishFullConnection(comm chan PeerCommunication) {
 
 	err := peer.sendHandshake()
 	if err != nil {
-		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
 		return
 	}
 
 	err = peer.readExistingPieces()
 	if err != nil {
 		peer.Disconnect()
-		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
 		return
 	}
 
 	err = peer.sendUnchoke()
 	if err != nil {
 		peer.Disconnect()
-		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
 		return
 	}
 
 	err = peer.sendInterested()
 	if err != nil {
 		peer.Disconnect()
-		comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
 		return
 	}
 
 	peer.Status = CONNECTED
-	comm <- PeerCommunication{peer, nil, FULL_CONNECTION, "OK"}
+	comm <- ConnectionCommunication{peer, "OK"}
 	return
 }
 

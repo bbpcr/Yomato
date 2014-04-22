@@ -3,7 +3,6 @@ package downloader
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -27,29 +26,31 @@ const (
 )
 
 type Downloader struct {
-	Trackers    []tracker.Tracker
-	TorrentInfo torrent_info.TorrentInfo
-	LocalServer *local_server.LocalServer
-	PeerId      string
-	GoodPeers   []peer.Peer
-	Bitfield    *bitfield.Bitfield
-	Status      int
-	Downloaded  int64
-	Speed       float64
-	Manager     piece_manager.PieceManager
+	Trackers       []tracker.Tracker
+	TorrentInfo    torrent_info.TorrentInfo
+	LocalServer    *local_server.LocalServer
+	PeerId         string
+	GoodPeers      []peer.Peer
+	Bitfield       *bitfield.Bitfield
+	Status         int
+	Downloaded     int64
+	Speed          float64
+	Manager        piece_manager.PieceManager
+	writerChan     chan file_writer.PieceData
+	connectionChan chan peer.ConnectionCommunication
+	requestChan    chan peer.RequestCommunication
 }
 
-func (downloader Downloader) RequestPeers(comm chan peer.PeerCommunication, bytesUploaded, bytesDownloaded, bytesLeft int64) {
+func (downloader Downloader) requestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) {
 
 	// Request the peers , from the tracker
 	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size
 	for trackerIndex := 0; trackerIndex < len(downloader.Trackers); trackerIndex++ {
 
 		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
-		fmt.Println(trackerResponse.GetInfo())
 
 		for peerIndex := 0; peerIndex < len(trackerResponse.Peers); peerIndex++ {
-			go trackerResponse.Peers[peerIndex].EstablishFullConnection(comm)
+			go trackerResponse.Peers[peerIndex].EstablishFullConnection(downloader.connectionChan)
 		}
 	}
 }
@@ -67,12 +68,10 @@ func (downloader *Downloader) StartDownloading() {
 		panic(err)
 	}
 	writer := file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
-	writerChan := make(chan file_writer.PieceData)
-	comm := make(chan peer.PeerCommunication)
-	go writer.StartWriting(writerChan)
+	go writer.StartWriting(downloader.writerChan)
 
 	startedTime := time.Now()
-	downloader.RequestPeers(comm, downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
+	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
 
 	peers := 0
 	ticker := time.NewTicker(time.Second * 1)
@@ -85,7 +84,7 @@ func (downloader *Downloader) StartDownloading() {
 			lastDownloaded = downloader.Downloaded
 			fmt.Println(fmt.Sprintf("=========Peers : %d Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds =========", peers, downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 10 {
-				go downloader.RequestPeers(comm, downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
+				go downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
 				seconds = 0
 			}
 		}
@@ -95,29 +94,44 @@ func (downloader *Downloader) StartDownloading() {
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
-		case msg, _ := <-comm:
-			receivedPeer := msg.Peer
-			msgID := msg.MessageID
-			status := msg.StatusMessage
-			if msgID == peer.REQUEST && status == "OK" {
 
-				downloader.parseRequest(receivedPeer, msg.BytesReceived, writerChan)
-				downloader.startRequesting(comm, receivedPeer)
-
-			} else if msgID == peer.REQUEST && status != "OK" {
-
-				downloader.parseRequest(receivedPeer, msg.BytesReceived, writerChan)
-				receivedPeer.Disconnect()
-				peers--
-				go receivedPeer.EstablishFullConnection(comm)
-
-			} else if msgID == peer.FULL_CONNECTION && status == "OK" {
-
+		case connectionMessage, _ := <-downloader.connectionChan:
+			if connectionMessage.StatusMessage == "OK" {
 				peers++
-				downloader.startRequesting(comm, receivedPeer)
-
-			} else if msgID == peer.FULL_CONNECTION && status != "OK" {
+				downloader.startRequesting(connectionMessage.Peer)
 			}
+
+		case piecesMessage, _ := <-downloader.requestChan:
+
+			// On this channel , we receive the data.
+			// We also receive empty pieces just flag them as not downloading.
+
+			for _, pieceData := range piecesMessage.Pieces {
+				blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
+				pieceLength := len(pieceData.Piece)
+				if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
+					downloader.Manager.BlockBytes[blockIndex] -= pieceLength
+					downloader.Manager.PieceBytes[pieceData.PieceNumber] += pieceLength
+					downloader.Downloaded += int64(pieceLength)
+					downloader.writerChan <- pieceData
+				}
+				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
+					downloader.Bitfield.Set(pieceData.PieceNumber, true)
+				}
+				downloader.Manager.BlockDownloading[blockIndex] = false
+			}
+
+			// If we receive at least one piece then we are good,
+			// and we request more. If the opposite happens then we reconnect the peer.
+			if piecesMessage.NumGood > 0 {
+
+				downloader.startRequesting(piecesMessage.Peer)
+			} else {
+				piecesMessage.Peer.Disconnect()
+				peers--
+				go piecesMessage.Peer.EstablishFullConnection(downloader.connectionChan)
+			}
+
 		}
 	}
 
@@ -125,7 +139,7 @@ func (downloader *Downloader) StartDownloading() {
 	return
 }
 
-func (downloader *Downloader) startRequesting(comm chan peer.PeerCommunication, receivedPeer *peer.Peer) {
+func (downloader *Downloader) startRequesting(receivedPeer *peer.Peer) {
 	now := time.Now()
 	requestParams := []int{}
 	for time.Since(now) <= 20*time.Microsecond {
@@ -145,42 +159,9 @@ func (downloader *Downloader) startRequesting(comm chan peer.PeerCommunication, 
 		}
 	}
 	if requestParams != nil {
-		go receivedPeer.ReadBlocks(comm, requestParams)
+		go receivedPeer.ReadBlocks(downloader.requestChan, requestParams)
 	} else {
 		receivedPeer.Disconnect()
-	}
-}
-
-func (downloader *Downloader) showRemainingBlocks() {
-	for key, value := range downloader.Manager.BlockBytes {
-		if value != 0 {
-			fmt.Println(key, ":", downloader.Manager.BlockPiece[key], ":", value)
-		}
-	}
-}
-
-func (downloader *Downloader) parseRequest(receivedPeer *peer.Peer, data []byte, writerChan chan file_writer.PieceData) {
-	index := 0
-	for index < len(data) {
-
-		pieceIndex := int(binary.BigEndian.Uint32(data[index : index+4]))
-		pieceOffset := int(binary.BigEndian.Uint32(data[index+4 : index+8]))
-		pieceLength := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
-		blockIndex := downloader.Manager.GetBlockIndex(pieceIndex, pieceOffset)
-		index += 12
-
-		if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
-
-			downloader.Manager.BlockBytes[blockIndex] -= pieceLength
-			downloader.Manager.PieceBytes[pieceIndex] += pieceLength
-			downloader.Downloaded += int64(pieceLength)
-			writerChan <- file_writer.PieceData{pieceIndex, pieceOffset, data[index : index+pieceLength]}
-		}
-		if downloader.Manager.IsPieceCompleted(pieceIndex, &downloader.TorrentInfo) {
-			downloader.Bitfield.Set(pieceIndex, true)
-		}
-		index += pieceLength
-		downloader.Manager.BlockDownloading[blockIndex] = false
 	}
 }
 
@@ -203,9 +184,12 @@ func New(torrent_path string) *Downloader {
 	file_bitfield := bitfield.New(int(torrentInfo.FileInformations.PieceCount))
 	peerId := createPeerId()
 	downloader := &Downloader{
-		TorrentInfo: *torrentInfo,
-		PeerId:      peerId,
-		Bitfield:    &file_bitfield,
+		TorrentInfo:    *torrentInfo,
+		PeerId:         peerId,
+		Bitfield:       &file_bitfield,
+		writerChan:     make(chan file_writer.PieceData),
+		requestChan:    make(chan peer.RequestCommunication),
+		connectionChan: make(chan peer.ConnectionCommunication),
 	}
 	downloader.LocalServer = local_server.New(peerId)
 	downloader.Trackers = make([]tracker.Tracker, 1+len(torrentInfo.AnnounceList))
@@ -219,7 +203,6 @@ func New(torrent_path string) *Downloader {
 	}
 	downloader.Status = NOT_COMPLETED
 	downloader.Manager = piece_manager.New(torrentInfo)
-
 	return downloader
 }
 
