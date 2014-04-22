@@ -261,6 +261,7 @@ func (peer *Peer) WriteRequest(params []int) error {
 	} else {
 		return errors.New("Peer not connected")
 	}
+	return nil
 }
 
 // This converts an array of ints into a byte array
