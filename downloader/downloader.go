@@ -45,14 +45,11 @@ func (downloader Downloader) RequestPeers(comm chan peer.PeerCommunication, byte
 	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size
 	for trackerIndex := 0; trackerIndex < len(downloader.Trackers); trackerIndex++ {
 
-		data, err := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
+		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
+		fmt.Println(trackerResponse.GetInfo())
 
-		if err != nil {
-			continue
-		}
-
-		for peerIndex := 0; peerIndex < len(data); peerIndex++ {
-			go data[peerIndex].EstablishFullConnection(comm)
+		for peerIndex := 0; peerIndex < len(trackerResponse.Peers); peerIndex++ {
+			go trackerResponse.Peers[peerIndex].EstablishFullConnection(comm)
 		}
 	}
 }

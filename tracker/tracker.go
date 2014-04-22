@@ -24,6 +24,18 @@ type Tracker struct {
 	Port        int
 }
 
+type TrackerResponse struct {
+	AnnounceUrl    string
+	FailureReason  string
+	WarningMessage string
+	Interval       int64
+	MinInterval    int64
+	TrackerID      string
+	Complete       int64
+	Incomplete     int64
+	Peers          []peer.Peer
+}
+
 // readPeersFromAnnouncer returns peers from announceUrl
 func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64) (bencode.Bencoder, error) {
 
@@ -191,8 +203,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 			24 + 6 * n	 2	        port	         TCP port of client
 		*/
 
-		// UDP connection doesnt allow me to read buffered, in go it seems, so i try to read in a biiiiig buffer
-		// and witch can hold exactly a maximum of 10000 Peers
+		// UDP connection doesnt allow me to read buffered, in golang it seems, so i try to read in a biiiiig buffer
+		// and which can hold exactly a maximum of 10000 Peers
 		const MAX_PEERS = 10000
 		bigBuffer := make([]byte, 5*4+MAX_PEERS*6)
 		bytesRead, err := udpConnection.Read(bigBuffer)
@@ -208,9 +220,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		peersAction := binary.BigEndian.Uint32(firstBytes[0:4])
 		peersTransactionID := binary.BigEndian.Uint32(firstBytes[4:8])
 		peersAnnounceInterval := binary.BigEndian.Uint32(firstBytes[8:12])
-		//peersLeechers := binary.BigEndian.Uint32(firstBytes[12:16])
-		//peersSeeders := binary.BigEndian.Uint32(firstBytes[16:20])
-		//totalPeers := int(peersLeechers + peersSeeders)
+		peersLeechers := binary.BigEndian.Uint32(firstBytes[12:16])
+		peersSeeders := binary.BigEndian.Uint32(firstBytes[16:20])
 
 		if peersTransactionID != 1000 || peersAction != 1 {
 			return bencode.Dictionary{}, errors.New("Incorrect transaction ID or action")
@@ -219,9 +230,21 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		bigDictionary := new(bencode.Dictionary)
 		bigDictionary.Values = make(map[bencode.String]bencode.Bencoder)
 
-		announceInterval := new(bencode.String)
-		announceInterval.Value = fmt.Sprintf("%d", peersAnnounceInterval)
+		announceInterval := new(bencode.Number)
+		announceInterval.Value = int64(peersAnnounceInterval)
 		bigDictionary.Values[bencode.String{"interval"}] = announceInterval
+
+		minAnnounceInterval := new(bencode.Number)
+		minAnnounceInterval.Value = announceInterval.Value / 2
+		bigDictionary.Values[bencode.String{"min interval"}] = minAnnounceInterval
+
+		complete := new(bencode.Number)
+		complete.Value = int64(peersSeeders)
+		bigDictionary.Values[bencode.String{"complete"}] = complete
+
+		incomplete := new(bencode.Number)
+		incomplete.Value = int64(peersLeechers)
+		bigDictionary.Values[bencode.String{"incomplete"}] = incomplete
 
 		peersList := new(bencode.String)
 		peersList.Value = string(bigBuffer[20:])
@@ -239,7 +262,20 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 
 // RequestPeers encodes an URL, making a request to announcer then
 // returns the peers as a list.
-func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) ([]peer.Peer, error) {
+func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) TrackerResponse {
+
+	trackerResponse := TrackerResponse{
+		FailureReason:  "none",
+		WarningMessage: "none",
+		Interval:       0,
+		MinInterval:    0,
+		TrackerID:      "",
+		Complete:       0,
+		Incomplete:     0,
+		Peers:          []peer.Peer{},
+		AnnounceUrl:    tracker.AnnounceUrl,
+	}
+
 	peerId := tracker.PeerId
 
 	// We create the URL like this :
@@ -248,40 +284,95 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 
 	data, err := readPeersFromAnnouncer(tracker.AnnounceUrl, peerId, string(tracker.TorrentInfo.InfoHash), tracker.Port, bytesUploaded, bytesDownloaded, bytesLeft)
 	if err != nil {
-		return nil, err
+		trackerResponse.FailureReason = "I/O Timeout"
+		return trackerResponse
 	}
 
 	responseDictionary, responseIsDictionary := data.(*bencode.Dictionary)
 
-	if !responseIsDictionary {
-		return nil, errors.New("Not a dictionary")
-	}
+	if responseIsDictionary {
 
-	peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
+		// If the response is correct , then we parse it.
 
-	if !peersIsList {
-		return nil, errors.New("Not a list")
-	}
+		peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
 
-	// At this point we have the peers as a list.
+		if peersIsList {
+			// At this point we have the peers as a list.
 
-	peersList := make([]peer.Peer, 0)
+			peersList := make([]peer.Peer, 0)
+			for _, peerEntry := range peers.Values {
+				peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
+				if peerDataIsDictionary {
+					ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
+					port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
+					peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
+					if ipIsString && portIsNumber && peerIdIsString {
 
-	for _, peerEntry := range peers.Values {
-		peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
-		if peerDataIsDictionary {
-			ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
-			port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
-			peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
-			if ipIsString && portIsNumber && peerIdIsString {
-
-				newPeer := peer.New(tracker.TorrentInfo, tracker.PeerId, ip.Value, int(port.Value))
-				newPeer.RemotePeerId = peerId.Value
-				peersList = append(peersList, newPeer)
+						newPeer := peer.New(tracker.TorrentInfo, tracker.PeerId, ip.Value, int(port.Value))
+						newPeer.RemotePeerId = peerId.Value
+						peersList = append(peersList, newPeer)
+					}
+				}
 			}
+			trackerResponse.Peers = peersList
 		}
+
+		failureReason, failureReasonIsString := responseDictionary.Values[bencode.String{"failure reason"}].(*bencode.String)
+		if failureReasonIsString {
+			trackerResponse.FailureReason = failureReason.Value
+		}
+
+		warning, warningIsString := responseDictionary.Values[bencode.String{"warning message"}].(*bencode.String)
+		if warningIsString {
+			trackerResponse.WarningMessage = warning.Value
+		}
+
+		interval, intervalIsNumber := responseDictionary.Values[bencode.String{"interval"}].(*bencode.Number)
+		if intervalIsNumber {
+			trackerResponse.Interval = interval.Value
+		}
+
+		minInterval, minIntervalIsNumber := responseDictionary.Values[bencode.String{"min interval"}].(*bencode.Number)
+		if minIntervalIsNumber {
+			trackerResponse.MinInterval = minInterval.Value
+		} else {
+			trackerResponse.MinInterval = trackerResponse.Interval / 2
+		}
+
+		trackerID, trackerIDisString := responseDictionary.Values[bencode.String{"tracker id"}].(*bencode.String)
+		if trackerIDisString {
+			trackerResponse.TrackerID = trackerID.Value
+		}
+
+		complete, completeIsNumber := responseDictionary.Values[bencode.String{"complete"}].(*bencode.Number)
+		if completeIsNumber {
+			trackerResponse.Complete = complete.Value
+		}
+
+		incomplete, incompleteIsNumber := responseDictionary.Values[bencode.String{"incomplete"}].(*bencode.Number)
+		if incompleteIsNumber {
+			trackerResponse.Incomplete = incomplete.Value
+		}
+
+	} else {
+		trackerResponse.FailureReason = "Malformed response from tracker"
 	}
-	return peersList, nil
+	return trackerResponse
+}
+
+func (resp TrackerResponse) GetInfo() string {
+	info := fmt.Sprintf("------\n")
+	info += fmt.Sprintf("Announce url : %s\n", resp.AnnounceUrl)
+	info += fmt.Sprintf("Failure reason : %s\n", resp.FailureReason)
+	info += fmt.Sprintf("Warning message : %s\n", resp.WarningMessage)
+	info += fmt.Sprintf("Interval : %d seconds\n", resp.Interval)
+	info += fmt.Sprintf("Min interval : %d seconds\n", resp.MinInterval)
+	info += fmt.Sprintf("Tracker id : %s\n", resp.TrackerID)
+	info += fmt.Sprintf("Num peers : %d\n", len(resp.Peers))
+	info += fmt.Sprintf("Seeders : %d\n", resp.Complete)
+	info += fmt.Sprintf("Leechers : %d\n", resp.Incomplete)
+	info += fmt.Sprintf("------\n")
+	return info
 }
 
 // New returns a Tracker type with given parameters
