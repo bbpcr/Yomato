@@ -268,7 +268,7 @@ func Parse(source []byte) (res Bencoder, rest []byte, err error) {
 		return ParseList(source)
 	case 'i':
 		return ParseNumber(source)
-	default:
-		return ParseString(source)
 	}
+
+	return ParseString(source)
 }
