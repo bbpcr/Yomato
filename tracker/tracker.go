@@ -36,8 +36,15 @@ type TrackerResponse struct {
 	Peers          []peer.Peer
 }
 
+const (
+	NONE = iota
+	DOWNLOAD_COMPLETED
+	DOWNLOAD_STARTED
+	DOWNLOAD_STOPPED
+)
+
 // readPeersFromAnnouncer returns peers from announceUrl
-func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64) (bencode.Bencoder, error) {
+func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, port int, uploaded int64, downloaded int64, left int64, event int) (bencode.Bencoder, error) {
 
 	qs := url.Values{}
 	qs.Add("peer_id", peerID)
@@ -46,9 +53,21 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("uploaded", fmt.Sprintf("%d", uploaded))
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
-	qs.Add("event", "started")
+	qs.Add("compact", fmt.Sprintf("%d", 1))
+	switch event {
+	case DOWNLOAD_STARTED:
+		qs.Add("event", "started")
+	case DOWNLOAD_STOPPED:
+		qs.Add("event", "stopped")
+	case DOWNLOAD_COMPLETED:
+		qs.Add("event", "completed")
+	case NONE:
+	default:
+		return bencode.Dictionary{}, errors.New("Invalid event")
+	}
 	qs.Add("numwant", "10000")
-	
+	qs.Add("key", "32896")
+
 	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
 
 	if err != nil {
@@ -112,10 +131,10 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		// http://code.google.com/p/udpt/wiki/UDPTrackerProtocol
 
 		// First step. We make ourself known.
-		connectionRequestBytes := make([]byte , 8 + 4 + 4)
+		connectionRequestBytes := make([]byte, 8+4+4)
 		binary.BigEndian.PutUint64(connectionRequestBytes[0:8], 0x41727101980) // first 8 bytes are the connection id
-		binary.BigEndian.PutUint32(connectionRequestBytes[8:12], 0) // next, 4 bytes are the action(0 for connection request)
-		binary.BigEndian.PutUint32(connectionRequestBytes[12:16], 1000) // last 4 bytes are the transction id (random number)
+		binary.BigEndian.PutUint32(connectionRequestBytes[8:12], 0)            // next, 4 bytes are the action(0 for connection request)
+		binary.BigEndian.PutUint32(connectionRequestBytes[12:16], 1000)        // last 4 bytes are the transction id (random number)
 
 		udpConnection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		_, err = udpConnection.Write(connectionRequestBytes)
@@ -161,21 +180,21 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 				96	 2 (16 bit integer)	 port	     the client's TCP port
 		*/
 
-		announceRequest := make([]byte , 98)
+		announceRequest := make([]byte, 98)
 		binary.BigEndian.PutUint64(announceRequest[0:8], receivedConnectionID) // first 8 bytes are the connection id from server
-		binary.BigEndian.PutUint32(announceRequest[8:12], 1) // next, 4 bytes are the action number (in this case is 1)
-		binary.BigEndian.PutUint32(announceRequest[12:16] , 1000) // next, 4 bytes are the transaction id (random number)
-		copy(announceRequest[16:36] , []byte(infoHash)) // next, 20 bytes are the info hash
-		copy(announceRequest[36:56] , []byte(peerID)) // next, 20 bytes are the peerID
+		binary.BigEndian.PutUint32(announceRequest[8:12], 1)                   // next, 4 bytes are the action number (in this case is 1)
+		binary.BigEndian.PutUint32(announceRequest[12:16], 1000)               // next, 4 bytes are the transaction id (random number)
+		copy(announceRequest[16:36], []byte(infoHash))                         // next, 20 bytes are the info hash
+		copy(announceRequest[36:56], []byte(peerID))                           // next, 20 bytes are the peerID
 		binary.BigEndian.PutUint64(announceRequest[56:64], uint64(downloaded)) //next, 8 bytes are the downloaded size
-		binary.BigEndian.PutUint64(announceRequest[64:72], uint64(left)) // next, 8 bytes are the left size
-		binary.BigEndian.PutUint64(announceRequest[72:80], uint64(uploaded)) // next, 8 bytes are the uploaded size
-		binary.BigEndian.PutUint32(announceRequest[80:84], 2) // next, 4 bytes are the action ( in this case is Downloaded Started = 2)
+		binary.BigEndian.PutUint64(announceRequest[64:72], uint64(left))       // next, 8 bytes are the left size
+		binary.BigEndian.PutUint64(announceRequest[72:80], uint64(uploaded))   // next, 8 bytes are the uploaded size
+		binary.BigEndian.PutUint32(announceRequest[80:84], uint32(event))      // next, 4 bytes are the action ( in this case is Downloaded Started = 2)
 		IPV4 := []byte{127, 0, 0, 1}
-		copy(announceRequest[84:88] , IPV4) // next, 4 bytes is the true ip of the machine. Doesnt matter what you put here.
+		copy(announceRequest[84:88], IPV4)                        // next, 4 bytes is the true ip of the machine. Doesnt matter what you put here.
 		binary.BigEndian.PutUint32(announceRequest[88:92], 32896) // next, 4 bytes is the key. I have written 32896 : [0 0 128 128]
 		binary.BigEndian.PutUint32(announceRequest[92:96], 10000) // next, 4 bytes is the number of max peers to receive.
-		binary.BigEndian.PutUint16(announceRequest[96:98], 80) // last 2 bytes is the port number
+		binary.BigEndian.PutUint16(announceRequest[96:98], 80)    // last 2 bytes is the port number
 
 		bytesWritten, err := udpConnection.Write(announceRequest)
 		if err != nil || bytesWritten < len(announceRequest) {
@@ -224,23 +243,23 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 
 		announceInterval := new(bencode.Number)
 		announceInterval.Value = int64(peersAnnounceInterval)
-		bigDictionary.Values[bencode.String{"interval"}] = announceInterval
+		bigDictionary.Values[bencode.String{Value: "interval"}] = announceInterval
 
 		minAnnounceInterval := new(bencode.Number)
 		minAnnounceInterval.Value = announceInterval.Value / 2
-		bigDictionary.Values[bencode.String{"min interval"}] = minAnnounceInterval
+		bigDictionary.Values[bencode.String{Value: "min interval"}] = minAnnounceInterval
 
 		complete := new(bencode.Number)
 		complete.Value = int64(peersSeeders)
-		bigDictionary.Values[bencode.String{"complete"}] = complete
+		bigDictionary.Values[bencode.String{Value: "complete"}] = complete
 
 		incomplete := new(bencode.Number)
 		incomplete.Value = int64(peersLeechers)
-		bigDictionary.Values[bencode.String{"incomplete"}] = incomplete
+		bigDictionary.Values[bencode.String{Value: "incomplete"}] = incomplete
 
 		peersList := new(bencode.String)
 		peersList.Value = string(bigBuffer[20:])
-		bigDictionary.Values[bencode.String{"peers"}] = peersList
+		bigDictionary.Values[bencode.String{Value: "peers"}] = peersList
 
 		perfectDictionary, err := GetPeers(bigDictionary)
 
@@ -254,8 +273,8 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 
 // RequestPeers encodes an URL, making a request to announcer then
 // returns the peers as a list.
-func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) TrackerResponse {
-	
+func (tracker Tracker) RequestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) TrackerResponse {
+
 	trackerResponse := TrackerResponse{
 		FailureReason:  "none",
 		WarningMessage: "none",
@@ -274,7 +293,7 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 	// announcer?peer_id= & info_hash= & port= & uploaded= & downloaded= & left= & event=
 	// The uploaded , downloaded and left should always be , but are not necesary
 
-	data, err := readPeersFromAnnouncer(tracker.AnnounceUrl, peerId, string(tracker.TorrentInfo.InfoHash), tracker.Port, bytesUploaded, bytesDownloaded, bytesLeft)
+	data, err := readPeersFromAnnouncer(tracker.AnnounceUrl, peerId, string(tracker.TorrentInfo.InfoHash), tracker.Port, bytesUploaded, bytesDownloaded, bytesLeft, event)
 	if err != nil {
 		trackerResponse.FailureReason = "I/O Timeout"
 		return trackerResponse
@@ -286,7 +305,7 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 
 		// If the response is correct , then we parse it.
 
-		peers, peersIsList := responseDictionary.Values[bencode.String{"peers"}].(*bencode.List)
+		peers, peersIsList := responseDictionary.Values[bencode.String{Value: "peers"}].(*bencode.List)
 
 		if peersIsList {
 			// At this point we have the peers as a list.
@@ -295,9 +314,9 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 			for _, peerEntry := range peers.Values {
 				peerData, peerDataIsDictionary := peerEntry.(*bencode.Dictionary)
 				if peerDataIsDictionary {
-					ip, ipIsString := peerData.Values[bencode.String{"ip"}].(*bencode.String)
-					port, portIsNumber := peerData.Values[bencode.String{"port"}].(*bencode.Number)
-					peerId, peerIdIsString := peerData.Values[bencode.String{"peer id"}].(*bencode.String)
+					ip, ipIsString := peerData.Values[bencode.String{Value: "ip"}].(*bencode.String)
+					port, portIsNumber := peerData.Values[bencode.String{Value: "port"}].(*bencode.Number)
+					peerId, peerIdIsString := peerData.Values[bencode.String{Value: "peer id"}].(*bencode.String)
 					if ipIsString && portIsNumber && peerIdIsString {
 
 						newPeer := peer.New(tracker.TorrentInfo, tracker.PeerId, ip.Value, int(port.Value))
@@ -309,39 +328,39 @@ func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft in
 			trackerResponse.Peers = peersList
 		}
 
-		failureReason, failureReasonIsString := responseDictionary.Values[bencode.String{"failure reason"}].(*bencode.String)
+		failureReason, failureReasonIsString := responseDictionary.Values[bencode.String{Value: "failure reason"}].(*bencode.String)
 		if failureReasonIsString {
 			trackerResponse.FailureReason = failureReason.Value
 		}
 
-		warning, warningIsString := responseDictionary.Values[bencode.String{"warning message"}].(*bencode.String)
+		warning, warningIsString := responseDictionary.Values[bencode.String{Value: "warning message"}].(*bencode.String)
 		if warningIsString {
 			trackerResponse.WarningMessage = warning.Value
 		}
 
-		interval, intervalIsNumber := responseDictionary.Values[bencode.String{"interval"}].(*bencode.Number)
+		interval, intervalIsNumber := responseDictionary.Values[bencode.String{Value: "interval"}].(*bencode.Number)
 		if intervalIsNumber {
 			trackerResponse.Interval = interval.Value
 		}
 
-		minInterval, minIntervalIsNumber := responseDictionary.Values[bencode.String{"min interval"}].(*bencode.Number)
+		minInterval, minIntervalIsNumber := responseDictionary.Values[bencode.String{Value: "min interval"}].(*bencode.Number)
 		if minIntervalIsNumber {
 			trackerResponse.MinInterval = minInterval.Value
 		} else {
 			trackerResponse.MinInterval = trackerResponse.Interval / 2
 		}
 
-		trackerID, trackerIDisString := responseDictionary.Values[bencode.String{"tracker id"}].(*bencode.String)
+		trackerID, trackerIDisString := responseDictionary.Values[bencode.String{Value: "tracker id"}].(*bencode.String)
 		if trackerIDisString {
 			trackerResponse.TrackerID = trackerID.Value
 		}
 
-		complete, completeIsNumber := responseDictionary.Values[bencode.String{"complete"}].(*bencode.Number)
+		complete, completeIsNumber := responseDictionary.Values[bencode.String{Value: "complete"}].(*bencode.Number)
 		if completeIsNumber {
 			trackerResponse.Complete = complete.Value
 		}
 
-		incomplete, incompleteIsNumber := responseDictionary.Values[bencode.String{"incomplete"}].(*bencode.Number)
+		incomplete, incompleteIsNumber := responseDictionary.Values[bencode.String{Value: "incomplete"}].(*bencode.Number)
 		if incompleteIsNumber {
 			trackerResponse.Incomplete = incomplete.Value
 		}

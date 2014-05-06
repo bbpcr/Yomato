@@ -41,18 +41,22 @@ type Downloader struct {
 	requestChan    chan peer.RequestCommunication
 }
 
-func (downloader Downloader) requestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) {
+func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
 
 	// Request the peers , from the tracker
-	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size
+	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size.
+	// The fourth param is the event.
+	numPeers := 0
 	for trackerIndex := 0; trackerIndex < len(downloader.Trackers); trackerIndex++ {
 
-		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
-		fmt.Println(trackerResponse.GetInfo())
+		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft, event)
+
 		for peerIndex := 0; peerIndex < len(trackerResponse.Peers); peerIndex++ {
 			go trackerResponse.Peers[peerIndex].EstablishFullConnection(downloader.connectionChan)
+			numPeers++
 		}
 	}
+	fmt.Printf("%d trackers gave us %d peers.\n", len(downloader.Trackers), numPeers)
 }
 
 // StartDownloading downloads the motherfucker
@@ -71,7 +75,7 @@ func (downloader *Downloader) StartDownloading() {
 	go writer.StartWriting(downloader.writerChan)
 
 	startedTime := time.Now()
-	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
+	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 
 	peers := 0
 	ticker := time.NewTicker(time.Second * 1)
@@ -84,12 +88,13 @@ func (downloader *Downloader) StartDownloading() {
 			lastDownloaded = downloader.Downloaded
 			fmt.Println(fmt.Sprintf("=========Peers : %d Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds =========", peers, downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 10 {
-				go downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded)
+				go downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
 				seconds = 0
 			}
 		}
 	}()
 
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 	defer ticker.Stop()
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
@@ -136,6 +141,8 @@ func (downloader *Downloader) StartDownloading() {
 	}
 
 	downloader.Status = COMPLETED
+	ticker.Stop()
+	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
 }
 
@@ -192,14 +199,16 @@ func New(torrent_path string) *Downloader {
 		connectionChan: make(chan peer.ConnectionCommunication),
 	}
 	downloader.LocalServer = local_server.New(peerId)
-	downloader.Trackers = make([]tracker.Tracker, 1+len(torrentInfo.AnnounceList))
+	downloader.Trackers = make([]tracker.Tracker, 1)
 
 	mainTracker := tracker.New(torrentInfo.AnnounceUrl, torrentInfo, downloader.LocalServer.Port, peerId)
 	downloader.Trackers[0] = mainTracker
 
-	for announcerIndex, announcerUrl := range torrentInfo.AnnounceList {
+	for _, announcerUrl := range torrentInfo.AnnounceList {
 		tracker := tracker.New(announcerUrl, torrentInfo, downloader.LocalServer.Port, peerId)
-		downloader.Trackers[announcerIndex+1] = tracker
+		if tracker.AnnounceUrl != mainTracker.AnnounceUrl {
+			downloader.Trackers = append(downloader.Trackers, tracker)
+		}
 	}
 	downloader.Status = NOT_COMPLETED
 	downloader.Manager = piece_manager.New(torrentInfo)
