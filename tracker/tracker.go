@@ -47,6 +47,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
 	qs.Add("event", "started")
+	qs.Add("numwant", "10000")
 
 	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
 
@@ -111,15 +112,10 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		// http://code.google.com/p/udpt/wiki/UDPTrackerProtocol
 
 		// First step. We make ourself known.
-		senderConnectionID := make([]byte, 8)
-		binary.BigEndian.PutUint64(senderConnectionID, 0x41727101980)
-		senderAction := make([]byte, 4)
-		binary.BigEndian.PutUint32(senderAction, 0)
-		senderTransactionID := make([]byte, 4)
-		binary.BigEndian.PutUint32(senderTransactionID, 1000)
-		connectionRequestBytes := senderConnectionID
-		connectionRequestBytes = append(connectionRequestBytes, senderAction...)
-		connectionRequestBytes = append(connectionRequestBytes, senderTransactionID...)
+		connectionRequestBytes := make([]byte , 8 + 4 + 4)
+		binary.BigEndian.PutUint64(connectionRequestBytes[0:8], 0x41727101980) // first 8 bytes are the connection id
+		binary.BigEndian.PutUint32(connectionRequestBytes[8:12], 0) // next, 4 bytes are the action(0 for connection request)
+		binary.BigEndian.PutUint32(connectionRequestBytes[12:16], 1000) // last 4 bytes are the transction id (random number)
 
 		udpConnection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		_, err = udpConnection.Write(connectionRequestBytes)
@@ -127,7 +123,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 			return bencode.Dictionary{}, err
 		}
 
-		//Step two , we read from the server. We should receive exactly the same format.
+		// Step two , we read from the server. We should receive exactly the same format.
 		// First 4 bytes action , next 4 bytes transaction id , last 8 bytes connection id which we will use it next
 
 		udpConnection.SetReadDeadline(time.Now().Add(1 * time.Second))
@@ -159,34 +155,30 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 				64	 8 (64 bit integer)	 left	     bytes left to complete the download
 				72	 8 (64 bit integer)	 uploaded	 bytes uploaded this session
 				80	 4 (32 bit integer)	 event	     0=None; 1=Download completed; 2=Download started; 3=Download stopped.
+				84	 4 (32 bit integer)	 IPv4	     IP address, default set to 0 (use source address)
+				88	 4 (32 bit integer)	 key	     ?
+				92	 4 (32 bit integer)	 num want	 -1 by default. number of clients to return
+				96	 2 (16 bit integer)	 port	     the client's TCP port
 		*/
 
-		var peerRequest []byte
-		ConnectionID := make([]byte, 8)
-		binary.BigEndian.PutUint64(ConnectionID, receivedConnectionID)
-		peerRequest = append(peerRequest, ConnectionID...)
-		Action := []byte{0, 0, 0, 1}
-		peerRequest = append(peerRequest, Action...)
-		peerRequest = append(peerRequest, senderTransactionID...)
-		peerRequest = append(peerRequest, []byte(infoHash)...)
-		peerRequest = append(peerRequest, []byte(peerID)...)
-		numBuffer := make([]byte, 8)
-		binary.BigEndian.PutUint64(numBuffer, uint64(downloaded))
-		peerRequest = append(peerRequest, numBuffer...)
-		binary.BigEndian.PutUint64(numBuffer, uint64(left))
-		peerRequest = append(peerRequest, numBuffer...)
-		binary.BigEndian.PutUint64(numBuffer, uint64(uploaded))
-		peerRequest = append(peerRequest, numBuffer...)
-		Event := []byte{0, 0, 0, 2}
-		peerRequest = append(peerRequest, Event...)
+		announceRequest := make([]byte , 98)
+		binary.BigEndian.PutUint64(announceRequest[0:8], receivedConnectionID) // first 8 bytes are the connection id from server
+		binary.BigEndian.PutUint32(announceRequest[8:12], 1) // next, 4 bytes are the action number (in this case is 1)
+		binary.BigEndian.PutUint32(announceRequest[12:16] , 1000) // next, 4 bytes are the transaction id (random number)
+		copy(announceRequest[16:36] , []byte(infoHash)) // next, 20 bytes are the info hash
+		copy(announceRequest[36:56] , []byte(peerID)) // next, 20 bytes are the peerID
+		binary.BigEndian.PutUint64(announceRequest[56:64], uint64(downloaded)) //next, 8 bytes are the downloaded size
+		binary.BigEndian.PutUint64(announceRequest[64:72], uint64(left)) // next, 8 bytes are the left size
+		binary.BigEndian.PutUint64(announceRequest[72:80], uint64(uploaded)) // next, 8 bytes are the uploaded size
+		binary.BigEndian.PutUint32(announceRequest[80:84], 2) // next, 4 bytes are the action ( in this case is Downloaded Started = 2)
 		IPV4 := []byte{0, 0, 0, 0}
-		peerRequest = append(peerRequest, IPV4...)
-		Key := []byte{0, 0, 128, 128}
-		peerRequest = append(peerRequest, Key...)
-		peerRequest = append(peerRequest, []byte{255, 255, 255, 255, 0, 80}...)
+		copy(announceRequest[84:88] , IPV4) // next, 4 bytes is the true ip of the machine. Doesnt matter what you put here.
+		binary.BigEndian.PutUint32(announceRequest[88:92], 32896) // next, 4 bytes is the key. I have written 32896 : [0 0 128 128]
+		binary.BigEndian.PutUint32(announceRequest[92:96], 10000) // next, 4 bytes is the number of max peers to receive.
+		binary.BigEndian.PutUint16(announceRequest[96:98], 80) // last 2 bytes is the port number
 
-		bytesWritten, err := udpConnection.Write(peerRequest)
-		if err != nil || bytesWritten < len(peerRequest) {
+		bytesWritten, err := udpConnection.Write(announceRequest)
+		if err != nil || bytesWritten < len(announceRequest) {
 			return bencode.Dictionary{}, err
 		}
 

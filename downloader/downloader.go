@@ -48,7 +48,7 @@ func (downloader Downloader) requestPeers(bytesUploaded, bytesDownloaded, bytesL
 	for trackerIndex := 0; trackerIndex < len(downloader.Trackers); trackerIndex++ {
 
 		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft)
-
+		fmt.Println(trackerResponse.GetInfo())
 		for peerIndex := 0; peerIndex < len(trackerResponse.Peers); peerIndex++ {
 			go trackerResponse.Peers[peerIndex].EstablishFullConnection(downloader.connectionChan)
 		}
