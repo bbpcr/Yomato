@@ -48,7 +48,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("left", fmt.Sprintf("%d", left))
 	qs.Add("event", "started")
 	qs.Add("numwant", "10000")
-
+	
 	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
 
 	if err != nil {
@@ -171,7 +171,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 		binary.BigEndian.PutUint64(announceRequest[64:72], uint64(left)) // next, 8 bytes are the left size
 		binary.BigEndian.PutUint64(announceRequest[72:80], uint64(uploaded)) // next, 8 bytes are the uploaded size
 		binary.BigEndian.PutUint32(announceRequest[80:84], 2) // next, 4 bytes are the action ( in this case is Downloaded Started = 2)
-		IPV4 := []byte{0, 0, 0, 0}
+		IPV4 := []byte{127, 0, 0, 1}
 		copy(announceRequest[84:88] , IPV4) // next, 4 bytes is the true ip of the machine. Doesnt matter what you put here.
 		binary.BigEndian.PutUint32(announceRequest[88:92], 32896) // next, 4 bytes is the key. I have written 32896 : [0 0 128 128]
 		binary.BigEndian.PutUint32(announceRequest[92:96], 10000) // next, 4 bytes is the number of max peers to receive.
@@ -255,7 +255,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 // RequestPeers encodes an URL, making a request to announcer then
 // returns the peers as a list.
 func (tracker Tracker) RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft int64) TrackerResponse {
-
+	
 	trackerResponse := TrackerResponse{
 		FailureReason:  "none",
 		WarningMessage: "none",
