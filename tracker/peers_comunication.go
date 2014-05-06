@@ -19,7 +19,7 @@ func GetPeers(bdecoded bencode.Bencoder) (bencode.Bencoder, error) {
 	}
 
 	// Get the peer value
-	peersBencoded := responseDictionary.Values[bencode.String{"peers"}]
+	peersBencoded := responseDictionary.Values[bencode.String{Value: "peers"}]
 
 	// We have two posibilities , peersBencoded is a list of dictionaries or is a string
 	// If it's a list , it's already decoded , if it's a string we need to decode it.
@@ -47,13 +47,13 @@ func GetPeers(bdecoded bencode.Bencoder) (bencode.Bencoder, error) {
 			peerId := new(bencode.String)
 			peerId.Value = ""
 
-			smallDictionary.Values[bencode.String{"port"}] = numberPort
-			smallDictionary.Values[bencode.String{"ip"}] = ip
-			smallDictionary.Values[bencode.String{"peer id"}] = peerId
+			smallDictionary.Values[bencode.String{Value: "port"}] = numberPort
+			smallDictionary.Values[bencode.String{Value: "ip"}] = ip
+			smallDictionary.Values[bencode.String{Value: "peer id"}] = peerId
 			bigList.Values = append(bigList.Values, smallDictionary)
 
 		}
-		responseDictionary.Values[bencode.String{"peers"}] = bigList
+		responseDictionary.Values[bencode.String{Value: "peers"}] = bigList
 	} else if !isList {
 
 		// If it isn't a list or a string , it's something else , and we return an error.
