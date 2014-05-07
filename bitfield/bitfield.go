@@ -21,7 +21,7 @@ func New(length int) Bitfield {
 		bitfield = Bitfield{make([]uint8, length/8+1), uint(length), uint(length), 0}
 	}
 	return bitfield
-	
+
 }
 
 // Return true if the position `pos` is ON and false otherwise

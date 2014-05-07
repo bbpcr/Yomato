@@ -31,6 +31,7 @@ type RequestCommunication struct {
 	Pieces   []file_writer.PieceData
 	NumGood  int
 	NumEmpty int
+	Speed    float64
 }
 
 type Peer struct {
@@ -43,6 +44,8 @@ type Peer struct {
 	LocalPeerId  string
 	RemotePeerId string
 	BitfieldInfo bitfield.Bitfield
+	Choked       bool
+	Interested   bool
 }
 
 const (
@@ -176,13 +179,12 @@ func (peer *Peer) readExistingPieces() error {
 }
 
 // Sends and unchoke message to the peer
-// The message is exactly : [0, 0, 0, 1, 1] (first four bytes length = 1 , last byte the id of the message = 1).
+// The message is exactly : [0, 0, 0, 1, 0] (first four bytes length = 1 , last byte the id of the message = 0).
 // Peers wont respond to block requests if they are choked and uninterested.
-func (peer *Peer) sendUnchoke() error {
-
+func (peer *Peer) sendChoke() error {
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
-		buf := []byte{0, 0, 0, 1, 1}
+		buf := []byte{0, 0, 0, 1, CHOKE}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		bytesWritten, err := peer.Connection.Write(buf)
 
@@ -193,6 +195,31 @@ func (peer *Peer) sendUnchoke() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
+		peer.Choked = true
+		return nil
+	}
+	return errors.New("Peer not connected")
+}
+
+// Sends and unchoke message to the peer
+// The message is exactly : [0, 0, 0, 1, 1] (first four bytes length = 1 , last byte the id of the message = 1).
+// Peers wont respond to block requests if they are choked and uninterested.
+func (peer *Peer) sendUnchoke() error {
+
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		buf := []byte{0, 0, 0, 1, UNCHOKE}
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(buf)
+
+		if err != nil || bytesWritten < len(buf) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		peer.Choked = false
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -217,21 +244,35 @@ func (peer *Peer) sendInterested() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-
-		// Most peers response immediately with unchoke after sending an unchoke and interested,
-		// Max buffer size should be 5 because unchoke size is 5.
-		id, _, err := peer.tryReadMessage(1*time.Second, 5)
-
-		if err != nil || id != UNCHOKE {
-			if err != nil {
-				return err
-			} else {
-				return errors.New("Didn't receive unchoked")
-			}
-		}
+		peer.Interested = true
 		return nil
 	}
 	return errors.New("Peer not connected")
+}
+
+// Sends an interested message to the peer.
+// The message is exactly : [0, 0, 0, 1, 3] (first four bytes length = 1 , last byte the id of the message = 3).
+// Peers wont respond to block requests if they are choked and uninterested.
+func (peer *Peer) sendUninterested() error {
+
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		buf := []byte{0, 0, 0, 1, NOT_INTERESTED}
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(buf)
+
+		if err != nil || bytesWritten < len(buf) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		peer.Interested = false
+		return nil
+	}
+	return errors.New("Peer not connected")
+
 }
 
 // Request multiple blocks on the peers
@@ -380,6 +421,10 @@ func (peer *Peer) sendHandshake() error {
 	return errors.New("Invalid status")
 }
 
+func (peer *Peer) SendChoke() error {
+	return peer.sendChoke()
+}
+
 func (peer *Peer) SendUnchoke() error {
 	return peer.sendUnchoke()
 }
@@ -388,8 +433,12 @@ func (peer *Peer) SendInterested() error {
 	return peer.sendInterested()
 }
 
-func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
+func (peer *Peer) SendUninterested() error {
+	return peer.sendUninterested()
+}
 
+func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
+	startTime := time.Now()
 	data, err := peer.readBlocks(len(params) / 3)
 	index := 0
 	message := RequestCommunication{
@@ -397,19 +446,25 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 		Pieces:   nil,
 		NumGood:  0,
 		NumEmpty: 0,
+		Speed:    0.0,
 	}
+	var totalDownloaded float64 = 0.0
 	for err == nil && index < len(data) {
 
 		var pieceData file_writer.PieceData
 		pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[index : index+4]))
 		pieceData.Offset = int(binary.BigEndian.Uint32(data[index+4 : index+8]))
 		pieceLength := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
+		totalDownloaded += float64(pieceLength)
 		index += 12
 		pieceData.Piece = data[index : index+pieceLength]
 		index += pieceLength
 		message.Pieces = append(message.Pieces, pieceData)
 		message.NumGood++
 	}
+
+	message.Speed = totalDownloaded / time.Since(startTime).Seconds()
+	message.Speed /= 1024
 
 	//fmt.Println(message.Pieces)
 	for request := 0; request < len(params); request += 3 {
@@ -485,5 +540,7 @@ func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port i
 		Status:      DISCONNECTED,
 		TorrentInfo: torrentInfo,
 		LocalPeerId: peerId,
+		Choked:      true,
+		Interested:  false,
 	}
 }
