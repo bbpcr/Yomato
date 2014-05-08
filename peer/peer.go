@@ -24,6 +24,7 @@ const (
 type ConnectionCommunication struct {
 	Peer          *Peer
 	StatusMessage string
+	Duration      time.Duration
 }
 
 type RequestCommunication struct {
@@ -31,13 +32,13 @@ type RequestCommunication struct {
 	Pieces   []file_writer.PieceData
 	NumGood  int
 	NumEmpty int
-	Speed    float64
+	Duration time.Duration
 }
 
 type Peer struct {
 	IP           string
 	Port         int
-	Connection   net.Conn
+	Connection   *net.TCPConn
 	Protocol     string
 	Status       PeerStatus
 	TorrentInfo  *torrent_info.TorrentInfo
@@ -75,35 +76,33 @@ func (peer *Peer) GetInfo() string {
 	case CONNECTED:
 		infoString += fmt.Sprintln("Status : CONNECTED")
 	case PENDING_HANDSHAKE:
-		infoString += fmt.Sprintln("Status : Pending Handshake")
+		infoString += fmt.Sprintln("Status : HANDSHAKING")
+	case HANDSHAKE:
+		infoString += fmt.Sprintln("Status : HANDSHAKED")
 	default:
 		infoString += fmt.Sprintln("Status : NONE")
 	}
 	infoString += fmt.Sprintln("Local peer ID : ", peer.LocalPeerId)
 	return infoString
 }
-
-// connect tries to get a TCP then an UDP connection for a peer
 func (peer *Peer) connect() error {
-	for _, protocol := range []string{"tcp", "udp"} {
-		conn, err := net.DialTimeout(protocol, fmt.Sprintf("%s:%d", peer.IP, peer.Port), 1*time.Second)
-		if err != nil {
-			continue
-		}
-		if protocol == "tcp" {
-			conn.(*net.TCPConn).SetKeepAlive(true)
-			conn.(*net.TCPConn).SetNoDelay(false)
-			conn.(*net.TCPConn).SetReadBuffer(16 * 1024)
-		} else {
-
-		}
-		peer.Connection = conn
-		return nil
+	tcpAdress, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", peer.IP, peer.Port))
+	if err != nil {
+		return err
 	}
-	return errors.New("Peer not available")
+	tcpConnection, err := net.DialTCP("tcp", nil, tcpAdress)
+	if err != nil {
+		return err
+	}
+	tcpConnection.SetKeepAlive(true)
+	tcpConnection.SetNoDelay(false)
+	tcpConnection.SetReadBuffer(64 * 1024)
+	tcpConnection.SetLinger(0)
+	peer.Connection = tcpConnection
+	return nil
 }
 
-func readExactly(connection net.Conn, buffer []byte, length int) error {
+func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
 	bytesReaded := 0
 
 	if length > len(buffer) || length < 0 {
@@ -356,9 +355,9 @@ func (peer *Peer) sendHandshake() error {
 	if peer.Status == DISCONNECTED {
 		//If the peer is disconnected,
 		//it connects to the ip and port that we have.
+		peer.Status = PENDING_HANDSHAKE
 		err := peer.connect()
 		if err == nil {
-			peer.Status = PENDING_HANDSHAKE
 			return peer.sendHandshake()
 		} else {
 			peer.Disconnect()
@@ -446,7 +445,7 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 		Pieces:   nil,
 		NumGood:  0,
 		NumEmpty: 0,
-		Speed:    0.0,
+		Duration: time.Since(startTime),
 	}
 	var totalDownloaded float64 = 0.0
 	for err == nil && index < len(data) {
@@ -462,9 +461,6 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 		message.Pieces = append(message.Pieces, pieceData)
 		message.NumGood++
 	}
-
-	message.Speed = totalDownloaded / time.Since(startTime).Seconds()
-	message.Speed /= 1024
 
 	//fmt.Println(message.Pieces)
 	for request := 0; request < len(params); request += 3 {
@@ -496,39 +492,39 @@ func (peer *Peer) Disconnect() {
 // sending unchoke and interested to the peer.
 func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 
-	if peer.Status == CONNECTED || peer.Status == PENDING_HANDSHAKE || peer.Status == HANDSHAKED {
+	if !(peer.Status == DISCONNECTED) {
 		return
 	}
-
+	startTime := time.Now()
 	err := peer.sendHandshake()
 	if err != nil {
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	err = peer.readExistingPieces()
 	if err != nil {
 		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	err = peer.sendUnchoke()
 	if err != nil {
 		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	err = peer.sendInterested()
 	if err != nil {
 		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	peer.Status = CONNECTED
-	comm <- ConnectionCommunication{peer, "OK"}
+	comm <- ConnectionCommunication{peer, "OK", time.Since(startTime)}
 	return
 }
 
