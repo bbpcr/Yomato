@@ -25,6 +25,10 @@ const (
 	COMPLETED
 )
 
+const (
+	MAX_CONNECTIONS = 60
+)
+
 type Downloader struct {
 	Trackers    []tracker.Tracker
 	TorrentInfo torrent_info.TorrentInfo
@@ -39,6 +43,7 @@ type Downloader struct {
 
 	DisconnectedPeers map[string]*peer.Peer
 	ConnectedPeers    map[string]*peer.Peer
+	AlivePeers		  map[string]*peer.Peer
 
 	writerChan     chan file_writer.PieceData
 	connectionChan chan peer.ConnectionCommunication
@@ -84,36 +89,70 @@ func (downloader *Downloader) StartDownloading() {
 	go writer.StartWriting(downloader.writerChan)
 
 	startedTime := time.Now()
+	
+
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 
-	ticker := time.NewTicker(time.Second * 3)
+	ticker := time.NewTicker(time.Second * 2)
+	reconnectTicker := time.NewTicker(time.Second * 5)
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
+	defer ticker.Stop()
+	defer reconnectTicker.Stop()
+	
 	go func() {
 		var seconds int = 0
 		var lastDownloaded int64 = 0
 		for _ = range ticker.C {
-			seconds ++
+			seconds += 2
 			downloader.Speed = float64(downloader.Downloaded-lastDownloaded) / 1024.0
-			downloader.Speed /= 3
+			downloader.Speed /= 2
 			lastDownloaded = downloader.Downloaded
-			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"),fmt.Sprintf("Peers : %d / %d Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", len(downloader.ConnectedPeers) , len(downloader.ConnectedPeers) + len(downloader.DisconnectedPeers), downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
-			if seconds == 4 {
-				go downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
-				seconds = 0
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"),fmt.Sprintf("Peers : %d / %d [Total %d] Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", len(downloader.ConnectedPeers) , len(downloader.AlivePeers) , len(downloader.ConnectedPeers) + len(downloader.DisconnectedPeers) , downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
+			if seconds == 200 {
+				downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
 			}
 		}
 	}()
 
-	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
-	defer ticker.Stop()
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
 		
+		case _ = <- reconnectTicker.C : 
+			connectedPeersCount := len(downloader.ConnectedPeers)
+			if connectedPeersCount < 10 {
+				for _ , alivePeer := range downloader.AlivePeers {
+					if alivePeer.Status == peer.DISCONNECTED {
+						go alivePeer.EstablishFullConnection(downloader.connectionChan)
+					}
+				}
+				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]") , "Reconnecting all alive peers, because of low connections")
+			} else if connectedPeersCount < MAX_CONNECTIONS {
+				newConnections := 0
+				printString := ""
+				for _ , alivePeer := range downloader.AlivePeers {
+					if alivePeer.Status == peer.DISCONNECTED {
+						go alivePeer.EstablishFullConnection(downloader.connectionChan)
+						newConnections++
+						printString += "[" + alivePeer.RemotePeerId + " : " + alivePeer.IP + "] " 
+						if newConnections == 3 {
+							break
+						}
+					}
+				}
+				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]") , "Connecting to " , printString)
+			}
+		
 		case connectionMessage, _ := <-downloader.connectionChan:
 			if connectionMessage.StatusMessage == "OK" {
-				downloader.ConnectedPeers[connectionMessage.Peer.IP] = connectionMessage.Peer
-				delete(downloader.DisconnectedPeers, connectionMessage.Peer.IP)
-				downloader.startRequesting(connectionMessage.Peer)
+				if len(downloader.ConnectedPeers) < MAX_CONNECTIONS {
+					downloader.ConnectedPeers[connectionMessage.Peer.IP] = connectionMessage.Peer
+					delete(downloader.DisconnectedPeers, connectionMessage.Peer.IP)
+					downloader.startRequesting(connectionMessage.Peer)
+				} else {
+					connectionMessage.Peer.Disconnect()
+				}
+				downloader.AlivePeers[connectionMessage.Peer.IP] = connectionMessage.Peer
 			}
 
 		case piecesMessage, _ := <-downloader.requestChan:
@@ -142,7 +181,12 @@ func (downloader *Downloader) StartDownloading() {
 				piecesMessage.Peer.Disconnect()
 				downloader.DisconnectedPeers[piecesMessage.Peer.IP] = piecesMessage.Peer				
 				delete(downloader.ConnectedPeers , piecesMessage.Peer.IP)
-				go piecesMessage.Peer.EstablishFullConnection(downloader.connectionChan)
+				for _ , alivePeer := range downloader.AlivePeers {
+					if alivePeer.IP != piecesMessage.Peer.IP && alivePeer.Status == peer.DISCONNECTED {
+						go alivePeer.EstablishFullConnection(downloader.connectionChan)
+						break
+					}
+				}
 			}
 
 			// If we receive at least one piece then we are good,
@@ -151,6 +195,7 @@ func (downloader *Downloader) StartDownloading() {
 	}	
 
 	downloader.Status = COMPLETED
+	reconnectTicker.Stop()
 	ticker.Stop()
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
@@ -169,8 +214,10 @@ func (downloader *Downloader) startRequesting(receivedPeer *peer.Peer) {
 			err := receivedPeer.WriteRequest(smallParams)
 			requestParams = append(requestParams, smallParams...)
 			if err != nil {
-				return
+				break
 			}
+		} else {
+			break
 		}
 	}
 	if requestParams != nil {
@@ -203,6 +250,7 @@ func New(torrent_path string) *Downloader {
 		
 		DisconnectedPeers: make(map[string]*peer.Peer),
 		ConnectedPeers:    make(map[string]*peer.Peer),
+		AlivePeers:		   make(map[string]*peer.Peer),
 		
 		writerChan:        make(chan file_writer.PieceData),
 		requestChan:       make(chan peer.RequestCommunication),
