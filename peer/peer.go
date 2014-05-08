@@ -24,7 +24,7 @@ const (
 type ConnectionCommunication struct {
 	Peer          *Peer
 	StatusMessage string
-    Duration	  time.Duration
+	Duration      time.Duration
 }
 
 type RequestCommunication struct {
@@ -86,11 +86,11 @@ func (peer *Peer) GetInfo() string {
 	return infoString
 }
 func (peer *Peer) connect() error {
-	tcpAdress , err := net.ResolveTCPAddr("tcp" , fmt.Sprintf("%s:%d",peer.IP , peer.Port))
+	tcpAdress, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", peer.IP, peer.Port))
 	if err != nil {
 		return err
 	}
-	tcpConnection , err := net.DialTCP("tcp" , nil , tcpAdress)
+	tcpConnection, err := net.DialTCP("tcp", nil, tcpAdress)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (peer *Peer) connect() error {
 	tcpConnection.SetReadBuffer(64 * 1024)
 	tcpConnection.SetLinger(0)
 	peer.Connection = tcpConnection
-	return nil	
+	return nil
 }
 
 func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
@@ -498,7 +498,7 @@ func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 	startTime := time.Now()
 	err := peer.sendHandshake()
 	if err != nil {
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error() , time.Since(startTime)}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
