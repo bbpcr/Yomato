@@ -1,6 +1,8 @@
 package piece_manager
 
 import (
+
+
 	"github.com/bbpcr/Yomato/peer"
 	"github.com/bbpcr/Yomato/torrent_info"
 )
@@ -77,7 +79,7 @@ func New(torrentInfo *torrent_info.TorrentInfo) PieceManager {
 // Sequentially (NOT good, easy for development)
 // or randomized (much better)
 func (manager PieceManager) GetNextBlocksToDownload(for_peer *peer.Peer, maxBlocks int) []int {
-	var blocks []int = nil
+	blocks := []int{}
 	for block, count := 0, 0; block < len(manager.BlockDownloading) && count < maxBlocks; block++ {
 		_, exists := manager.BlockBytes[block]
 		if exists && !manager.BlockDownloading[block] && for_peer.BitfieldInfo.At(manager.BlockPiece[block]) && manager.BlockBytes[block] > 0 {
@@ -85,6 +87,17 @@ func (manager PieceManager) GetNextBlocksToDownload(for_peer *peer.Peer, maxBloc
 			count++
 		}
 	}
+	
+	if len(blocks) < maxBlocks {
+		for block, count := 0, len(blocks); block < len(manager.BlockDownloading) && count < maxBlocks; block++ {
+			_, exists := manager.BlockBytes[block]
+			if exists && for_peer.BitfieldInfo.At(manager.BlockPiece[block]) && manager.BlockBytes[block] > 0 {
+				blocks = append(blocks, block)
+				count++
+			}
+		}
+	}
+	
 	return blocks
 }
 
