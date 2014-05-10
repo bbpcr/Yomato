@@ -50,8 +50,8 @@ type Peer struct {
 	ClientInterested bool
 	PeerChoking      bool
 	PeerInterested   bool
-	
-	ConnectTime      time.Duration
+
+	ConnectTime time.Duration
 }
 
 const (
@@ -343,7 +343,7 @@ func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
 			} else if id == UNCHOKE {
 				peer.PeerChoking = false
 				request--
-			} else if id == INTERESTED { 
+			} else if id == INTERESTED {
 				peer.PeerInterested = true
 				request--
 			} else if id == NOT_INTERESTED {
@@ -548,14 +548,14 @@ func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 // New returns a peer with given description
 func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port int) Peer {
 	return Peer{
-		IP:          ip,
-		Port:        port,
-		Status:      DISCONNECTED,
-		TorrentInfo: torrentInfo,
-		LocalPeerId: peerId,
-		ClientChoking:      true,
-		ClientInterested:   false,
-		PeerChoking:        true,
-		PeerInterested:     false,
+		IP:               ip,
+		Port:             port,
+		Status:           DISCONNECTED,
+		TorrentInfo:      torrentInfo,
+		LocalPeerId:      peerId,
+		ClientChoking:    true,
+		ClientInterested: false,
+		PeerChoking:      true,
+		PeerInterested:   false,
 	}
 }
