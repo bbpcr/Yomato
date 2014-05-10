@@ -45,8 +45,13 @@ type Peer struct {
 	LocalPeerId  string
 	RemotePeerId string
 	BitfieldInfo bitfield.Bitfield
-	Choked       bool
-	Interested   bool
+
+	ClientChoking    bool
+	ClientInterested bool
+	PeerChoking      bool
+	PeerInterested   bool
+	
+	ConnectTime      time.Duration
 }
 
 const (
@@ -194,7 +199,7 @@ func (peer *Peer) sendChoke() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-		peer.Choked = true
+		peer.ClientChoking = true
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -218,7 +223,7 @@ func (peer *Peer) sendUnchoke() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-		peer.Choked = false
+		peer.ClientChoking = false
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -243,7 +248,7 @@ func (peer *Peer) sendInterested() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-		peer.Interested = true
+		peer.ClientInterested = true
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -267,7 +272,7 @@ func (peer *Peer) sendUninterested() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-		peer.Interested = false
+		peer.ClientInterested = false
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -332,6 +337,18 @@ func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
 				receivedBytes = append(receivedBytes, data[0:8]...)
 				receivedBytes = append(receivedBytes, convertIntsToByteArray(len(data[8:]))...)
 				receivedBytes = append(receivedBytes, data[8:]...)
+			} else if id == CHOKE {
+				peer.PeerChoking = true
+				break
+			} else if id == UNCHOKE {
+				peer.PeerChoking = false
+				request--
+			} else if id == INTERESTED { 
+				peer.PeerInterested = true
+				request--
+			} else if id == NOT_INTERESTED {
+				peer.PeerInterested = false
+				request--
 			}
 			// Append the bytes
 		}
@@ -536,7 +553,9 @@ func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port i
 		Status:      DISCONNECTED,
 		TorrentInfo: torrentInfo,
 		LocalPeerId: peerId,
-		Choked:      true,
-		Interested:  false,
+		ClientChoking:      true,
+		ClientInterested:   false,
+		PeerChoking:        true,
+		PeerInterested:     false,
 	}
 }
