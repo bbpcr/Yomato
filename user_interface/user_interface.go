@@ -1,0 +1,203 @@
+package user_interface
+
+import (
+	"fmt"
+	//"github.com/bbpcr/Yomato/downloader"
+	"github.com/mattn/go-gtk/gdkpixbuf"
+	"github.com/mattn/go-gtk/glib"
+	"github.com/mattn/go-gtk/gtk"
+	"strconv"
+)
+
+type LoadBotton struct {
+	button      *gtk.Button
+	filechooser *gtk.FileChooserDialog
+}
+
+func NewLoadButton(label string) *LoadBotton {
+	lb := &LoadBotton{
+		button: gtk.NewButtonWithLabel(label),
+	}
+	return lb
+}
+
+func (bt *LoadBotton) RunFileChooser() {
+	bt.filechooser.Run()
+}
+
+type UserInterface struct {
+	MainWindow   *gtk.Window
+	VerticalBox  *gtk.VBox
+	Load         *LoadBotton
+	TorrentFrame *gtk.Frame
+	LoadFrame    *gtk.Frame
+	TorrentList  *GTKTorrentList
+	XDimension   int
+	YDimension   int
+}
+type GTKTorrentList struct {
+	store    *gtk.ListStore
+	treeview *gtk.TreeView
+	paths    []string
+}
+
+func (ui *UserInterface) CreateWindow() {
+	ui.MainWindow = gtk.NewWindow(gtk.WINDOW_TOPLEVEL)
+	ui.MainWindow.SetDefaultSize(ui.XDimension, ui.YDimension)
+}
+func (ui *UserInterface) CreateVBox() {
+	ui.VerticalBox = gtk.NewVBox(false, 1)
+}
+func NewUI(X, Y int) *UserInterface {
+	ui := &UserInterface{
+		XDimension: X,
+		YDimension: Y,
+	}
+
+	return ui
+}
+func NewGTKTorrentList() *GTKTorrentList {
+	Tlist := &GTKTorrentList{
+		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_INT),
+		treeview: gtk.NewTreeView(),
+		paths:    []string{},
+	}
+	Tlist.treeview.SetModel(Tlist.store)
+	Tlist.treeview.AppendColumn(
+		gtk.NewTreeViewColumnWithAttributes("Name", gtk.NewCellRendererText(), "text", 0))
+
+	Tlist.treeview.AppendColumn(
+		gtk.NewTreeViewColumnWithAttributes("Progress", gtk.NewCellRendererProgress(), "value", 1))
+	return Tlist
+}
+
+func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentName string) {
+	var iter gtk.TreeIter
+	Tlist.paths = append(Tlist.paths, TorrentName)
+
+	Tlist.store.Append(&iter)
+	Tlist.store.Set(&iter, TorrentName, 0)
+
+	//This is how we see the attributes
+	/*
+		var attr_val glib.GValue
+		Tlist.store.GetValue(&iter, 0, &attr_val)
+		fmt.Println(attr_val.GetString())
+	*/
+
+}
+
+func (ui *UserInterface) CreateFileChooser() {
+	ui.Load.filechooser = gtk.NewFileChooserDialog(
+		"Choose Torrent file...",
+		ui.Load.button.GetTopLevelAsWindow(),
+		gtk.FILE_CHOOSER_ACTION_OPEN,
+		gtk.STOCK_OK,
+		gtk.RESPONSE_ACCEPT)
+
+	//Make sure we accept only .torrent files
+	torrentfilter := gtk.NewFileFilter()
+	torrentfilter.AddPattern("*.torrent")
+	torrentfilter.SetName("Torrent Files")
+	ui.Load.filechooser.AddFilter(torrentfilter)
+
+	//Mainly adding each time a torrent when load
+	//TODO: check if torrent valid
+	ui.Load.filechooser.Response(func() {
+		torrent_name := ui.Load.filechooser.GetFilename()
+		ui.TorrentList.AddTorrentDescription(torrent_name)
+		ui.Load.filechooser.Destroy()
+		fmt.Println("loading file...over")
+	})
+}
+func XpmLabelBox(path, label_text string) (*gtk.HBox, *glib.Error) {
+
+	box1 := gtk.NewHBox(false, 0)
+	box1.SetBorderWidth(2)
+
+	pixbuf, err := gdkpixbuf.NewFromFileAtScale(path, 50, 60, true)
+	if err != nil {
+		return nil, err
+	}
+	image := gtk.NewImage()
+	image.SetFromPixbuf(pixbuf)
+
+	label := gtk.NewLabel(label_text)
+	box1.PackStart(image, false, false, 3)
+	box1.PackStart(label, false, false, 3)
+	box1.ShowAll()
+
+	return box1, nil
+
+}
+
+func (ui *UserInterface) AddFirstFrame() {
+
+	ui.LoadFrame = gtk.NewFrame("Torrent Loader")
+	ui.LoadFrame.SetBorderWidth(5)
+
+	ui.TorrentFrame = gtk.NewFrame("List of Torrents Loaded")
+	ui.TorrentFrame.SetBorderWidth(5)
+
+	hbox := gtk.NewHBox(false, 5)
+	hbox.SetSizeRequest(400, 50)
+	hbox.SetBorderWidth(5)
+
+	ui.Load = NewLoadButton("Load File")
+
+	ui.Load.button.Clicked(func() {
+		fmt.Println("button clicked:", ui.Load.button.GetLabel())
+
+		ui.CreateFileChooser()
+		ui.Load.RunFileChooser()
+	})
+	hbox.PackStart(ui.Load.button, true, false, 0)
+
+	//Make the start button
+	hbox.PackStart(gtk.NewVSeparator(), false, false, 0)
+	start_button := gtk.NewButton()
+	start_button.Connect("clicked", func() {
+		tree_selection := ui.TorrentList.treeview.GetSelection()
+		fmt.Println("pushed the start button")
+
+		var iter gtk.TreeIter
+		tree_selection.GetSelected(&iter)
+		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
+
+		torrent_index, err := strconv.Atoi(torrent_name_str)
+		if err != nil {
+			return
+		}
+
+		fmt.Println(ui.TorrentList.paths[torrent_index])
+	}, "Download me!")
+
+	xpm_box, err := XpmLabelBox("user_interface/play.jpg", "Download me!")
+	if err != nil {
+		fmt.Print("Cannot load the start image")
+		return
+	}
+
+	start_button.Add(xpm_box)
+	hbox.PackStart(start_button, false, false, 0)
+
+	ui.LoadFrame.Add(hbox)
+	ui.VerticalBox.PackStart(ui.LoadFrame, false, true, 0)
+
+}
+
+func Wrapper() *gtk.Window {
+
+	ui := NewUI(700, 300)
+	ui.CreateWindow()
+	ui.CreateVBox()
+
+	ui.TorrentList = NewGTKTorrentList()
+	// The frame with the Load Button
+	ui.AddFirstFrame()
+	ui.VerticalBox.Add(ui.TorrentList.treeview)
+
+	ui.MainWindow.Add(ui.VerticalBox)
+	ui.MainWindow.ShowAll()
+	return ui.MainWindow
+}
