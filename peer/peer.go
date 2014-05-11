@@ -50,6 +50,7 @@ type Peer struct {
 	ClientInterested bool
 	PeerChoking      bool
 	PeerInterested   bool
+	Requesting       bool
 
 	ConnectTime time.Duration
 	bufferedPieces []file_writer.PieceData
@@ -272,13 +273,28 @@ func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
 
 func (peer *Peer) readMessages(maxMessages int) {
 
+	buffer := make([]byte , 17 * 1024)
+
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
 		for messageIndex := 0 ; messageIndex < maxMessages; messageIndex ++ {
-			id , data , err := peer.tryReadMessage(1 * time.Second , 17 * 1024)
+		
+			peer.Connection.SetReadDeadline(time.Now().Add(1 * time.Second))
+			err := readExactly(peer.Connection, buffer, 5)
+
 			if err != nil {
 				break
 			}
+		
+			// Then we convert the first 4 bytes into length , 5-th byte into id , and we read the rest of the data
+		
+			length := int(binary.BigEndian.Uint32(buffer[0:4]))
+			id := int(buffer[4])
+			err = readExactly(peer.Connection, buffer, length-1)
+			if err != nil {
+				break
+			}
+			data := buffer[0 : length - 1]
 			if id == BITFIELD {
 				peer.BitfieldInfo.Put(data, len(data))
 			} else if id == HAVE {
@@ -491,7 +507,7 @@ func (peer *Peer) Disconnect() {
 	if peer.Connection != nil {
 		peer.Connection.Close()
 	}
-	peer.Connection = nil
+	//peer.Connection = nil
 	return
 }
 
@@ -549,6 +565,7 @@ func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port i
 		ClientInterested: false,
 		PeerChoking:      true,
 		PeerInterested:   false,
+		Requesting:       false,
 		ConnectTime:      time.Second * 10000,
 	}
 }
