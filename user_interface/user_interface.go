@@ -84,7 +84,7 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 	torrent_name := now_download.TorrentInfo.FileInformations.RootPath
 
 	Tlist.store.Append(&iter)
-	Tlist.store.Set(&iter, torrent_name, 0, "0.00kb/s")
+	Tlist.store.Set(&iter, torrent_name, 0, "0.00KB/s")
 
 	//This is how we see the attributes
 	/*
@@ -165,18 +165,27 @@ func (ui *UserInterface) AddFirstFrame() {
 	hbox.PackStart(gtk.NewVSeparator(), false, false, 0)
 	start_button := gtk.NewButton()
 	start_button.Connect("clicked", func() {
+
+		//make sure we didn't click start before having some files loaded
+		if len(ui.TorrentList.paths) == 0 {
+			return
+		}
+
 		tree_selection := ui.TorrentList.treeview.GetSelection()
+
 		fmt.Println("pushed the start button")
 
 		var iter gtk.TreeIter
 		tree_selection.GetSelected(&iter)
 		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
-
 		torrent_index, err := strconv.Atoi(torrent_name_str)
+
 		if err != nil {
 			return
 		}
-
+		go func() {
+			ui.TorrentList.downloaders[torrent_index].StartDownloading()
+		}()
 		fmt.Println(ui.TorrentList.paths[torrent_index])
 	}, "Download me!")
 
@@ -202,14 +211,18 @@ func (ui *UserInterface) update() {
 
 	for i := 0; i < len(ui.TorrentList.paths); i++ {
 
-		var attr_value glib.GValue
-		if ui.TorrentList.store.IterIsValid(&iter) == false {
-			return
-		}
-		ui.TorrentList.store.GetValue(&iter, 2, &attr_value)
+		//there's got to be a way to update smarther than this..
+		//shit happens when the loop doesn't end and continues after one torrent is added
 
-		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", ui.TorrentList.downloaders[i].Speed)+"kb/s")
+		//update the speed
 
+		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", ui.TorrentList.downloaders[i].Speed)+"KB/s")
+
+		var current_torrent = ui.TorrentList.downloaders[i]
+
+		var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
+
+		ui.TorrentList.store.SetValue(&iter, 1, attr_value)
 		if i != len(ui.TorrentList.paths)-1 {
 			ui.TorrentList.store.IterNext(&iter)
 		}
@@ -229,12 +242,11 @@ func Wrapper() *gtk.Window {
 	ui.MainWindow.Add(ui.VerticalBox)
 	ui.MainWindow.ShowAll()
 	ticker := time.NewTicker(time.Second * 1)
-
 	go func() {
 		var seconds = 0
 		for _ = range ticker.C {
 			seconds++
-			if seconds == 3 {
+			if seconds == 10 {
 				ui.update()
 				seconds = 0
 			}
