@@ -1,12 +1,6 @@
 package main
 
 import (
-	/*
-		"fmt"
-		"os"
-
-		"github.com/bbpcr/Yomato/downloader"
-	*/
 	"fmt"
 	"github.com/bbpcr/Yomato/user_interface"
 	"github.com/mattn/go-gtk/glib"
@@ -14,18 +8,6 @@ import (
 )
 
 func main() {
-	/*
-		if len(os.Args) < 2 {
-			fmt.Println("Usage: yomato [file.torrent]")
-			return
-		}
-
-		path := os.Args[1]
-
-		download := downloader.New(path)
-		fmt.Println(download.TorrentInfo.Description())
-		download.StartDownloading()
-	*/
 	gtk.Init(nil)
 	window := user_interface.Wrapper()
 	window.SetPosition(gtk.WIN_POS_CENTER)
