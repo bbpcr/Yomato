@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-gtk/glib"
 	"github.com/mattn/go-gtk/gtk"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -77,9 +78,17 @@ func (bt *LoadBotton) RunFileChooser() {
 }
 func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 	var iter gtk.TreeIter
-	Tlist.paths = append(Tlist.paths, TorrentPath)
+
+	//Not adding duplicates
 
 	now_download := downloader.New(TorrentPath)
+
+	for i := 0; i < len(Tlist.downloaders); i++ {
+		if Tlist.downloaders[i].TorrentInfo.FileInformations.RootPath == now_download.TorrentInfo.FileInformations.RootPath {
+			return
+		}
+	}
+	Tlist.paths = append(Tlist.paths, TorrentPath)
 	Tlist.downloaders = append(Tlist.downloaders, now_download)
 	torrent_name := now_download.TorrentInfo.FileInformations.RootPath
 
@@ -109,13 +118,17 @@ func (ui *UserInterface) CreateFileChooser() {
 	torrentfilter.SetName("Torrent Files")
 	ui.Load.filechooser.AddFilter(torrentfilter)
 
-	//Mainly adding each time a torrent when load
-	//TODO: check if torrent valid
 	ui.Load.filechooser.Response(func() {
-		torrent_name := ui.Load.filechooser.GetFilename()
-		ui.TorrentList.AddTorrentDescription(torrent_name)
-		ui.Load.filechooser.Destroy()
-		fmt.Println("loading file...over")
+		torrent_path := ui.Load.filechooser.GetFilename()
+		splitted_path := strings.Split(torrent_path, ".")
+		is_torrent := (splitted_path[len(splitted_path)-1] == "torrent")
+		if is_torrent == true {
+
+			ui.TorrentList.AddTorrentDescription(torrent_path)
+			ui.Load.filechooser.Destroy()
+
+			fmt.Println("loading file...over")
+		}
 	})
 }
 func XpmLabelBox(path, label_text string) (*gtk.HBox, *glib.Error) {
@@ -186,7 +199,7 @@ func (ui *UserInterface) AddFirstFrame() {
 		go func() {
 			ui.TorrentList.downloaders[torrent_index].StartDownloading()
 		}()
-		fmt.Println(ui.TorrentList.paths[torrent_index])
+
 	}, "Download me!")
 
 	xpm_box, err := XpmLabelBox("user_interface/play.jpg", "Download me!")
