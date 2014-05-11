@@ -2,7 +2,7 @@ package user_interface
 
 import (
 	"fmt"
-	//"github.com/bbpcr/Yomato/downloader"
+	"github.com/bbpcr/Yomato/downloader"
 	"github.com/mattn/go-gtk/gdkpixbuf"
 	"github.com/mattn/go-gtk/glib"
 	"github.com/mattn/go-gtk/gtk"
@@ -36,9 +36,10 @@ type UserInterface struct {
 	YDimension   int
 }
 type GTKTorrentList struct {
-	store    *gtk.ListStore
-	treeview *gtk.TreeView
-	paths    []string
+	store       *gtk.ListStore
+	treeview    *gtk.TreeView
+	paths       []string
+	downloaders []*downloader.Downloader
 }
 
 func (ui *UserInterface) CreateWindow() {
@@ -58,7 +59,7 @@ func NewUI(X, Y int) *UserInterface {
 }
 func NewGTKTorrentList() *GTKTorrentList {
 	Tlist := &GTKTorrentList{
-		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_INT),
+		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_INT, glib.G_TYPE_STRING),
 		treeview: gtk.NewTreeView(),
 		paths:    []string{},
 	}
@@ -68,21 +69,28 @@ func NewGTKTorrentList() *GTKTorrentList {
 
 	Tlist.treeview.AppendColumn(
 		gtk.NewTreeViewColumnWithAttributes("Progress", gtk.NewCellRendererProgress(), "value", 1))
+
+	Tlist.treeview.AppendColumn(
+		gtk.NewTreeViewColumnWithAttributes("Download Speed", gtk.NewCellRendererText(), "text", 2))
 	return Tlist
 }
 
-func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentName string) {
+func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 	var iter gtk.TreeIter
-	Tlist.paths = append(Tlist.paths, TorrentName)
+	Tlist.paths = append(Tlist.paths, TorrentPath)
+
+	now_download := downloader.New(TorrentPath)
+	Tlist.downloaders = append(Tlist.downloaders, now_download)
+	torrent_name := now_download.TorrentInfo.FileInformations.RootPath
 
 	Tlist.store.Append(&iter)
-	Tlist.store.Set(&iter, TorrentName, 0)
+	Tlist.store.Set(&iter, torrent_name, 0, "0kb/s")
 
 	//This is how we see the attributes
 	/*
 		var attr_val glib.GValue
 		Tlist.store.GetValue(&iter, 0, &attr_val)
-		fmt.Println(attr_val.GetString())
+		fmt.Println(attr_val.Value)
 	*/
 
 }
