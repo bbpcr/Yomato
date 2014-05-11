@@ -226,90 +226,39 @@ func (peer *Peer) sendInterested() error {
 	return errors.New("Peer not connected")
 }
 
-func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
-
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
-
-		receivedBytes := []byte{}
-
-		for request := 0; request < maxBlocks; request++ {
-
-			// Read on message from the connection , using a 17kb buffer. (One message cannot be higher than 17kb)
-			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
-			// If it encounters an error , then we stop reading.
-			if err != nil {
-				break
-			}
-			if id == PIECE {
-				receivedBytes = append(receivedBytes, data[0:8]...)
-				receivedBytes = append(receivedBytes, convertIntsToByteArray(len(data[8:]))...)
-				receivedBytes = append(receivedBytes, data[8:]...)
-			} else if id == CHOKE {
-				peer.PeerChoking = true
-				break
-			} else if id == UNCHOKE {
-				peer.PeerChoking = false
-				request--
-			} else if id == INTERESTED {
-				peer.PeerInterested = true
-				request--
-			} else if id == NOT_INTERESTED {
-				peer.PeerInterested = false
-				request--
-			}
-			// Append the bytes
-		}
-
-		// If the length of bytes received is 0 (we didn't read anything)
-		// this returns also an error, so we know to handle the peer differently
-		if len(receivedBytes) == 0 {
-			return nil, errors.New("Nothing readed")
-		} else {
-			return receivedBytes, nil
-		}
-	}
-	return nil, errors.New("Peer not connected")
-}
-
+// This function reads messages , and parses them.
 func (peer *Peer) readMessages(maxMessages int) {
-
-	buffer := make([]byte , 17 * 1024)
 
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
 		for messageIndex := 0 ; messageIndex < maxMessages; messageIndex ++ {
 		
-			peer.Connection.SetReadDeadline(time.Now().Add(1 * time.Second))
-			err := readExactly(peer.Connection, buffer, 5)
-
+			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
 			if err != nil {
 				break
 			}
-		
-			// Then we convert the first 4 bytes into length , 5-th byte into id , and we read the rest of the data
-		
-			length := int(binary.BigEndian.Uint32(buffer[0:4]))
-			id := int(buffer[4])
-			err = readExactly(peer.Connection, buffer, length-1)
-			if err != nil {
-				break
-			}
-			data := buffer[0 : length - 1]
 			if id == BITFIELD {
-				peer.BitfieldInfo.Put(data, len(data))
+			
+				peer.BitfieldInfo.Put(data, len(data))				
 			} else if id == HAVE {
+			
 				pieceIndex := int(binary.BigEndian.Uint32(data))
 				peer.BitfieldInfo.Set(pieceIndex, true)
 			} else if id == UNCHOKE {
+			
 				peer.PeerChoking = false
 			} else if id == CHOKE {
+			
 				peer.PeerChoking = true
 				break
 			} else if id == INTERESTED {
+			
 				peer.PeerInterested = true
 			} else if id == NOT_INTERESTED {
+			
 				peer.PeerInterested = false
 			} else if id == PIECE {
+			
 				var pieceData file_writer.PieceData
 				pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[0 : 4]))
 				pieceData.Offset = int(binary.BigEndian.Uint32(data[4 : 8]))
@@ -484,7 +433,6 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 	if peer.bufferedPieces != nil {
 		message.Pieces = append(message.Pieces , peer.bufferedPieces...)
 		message.NumGood = len(peer.bufferedPieces)
-		peer.bufferedPieces = nil
 	}
 	
 	for request := 0; request < len(params); request += 3 {
@@ -496,6 +444,7 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 		message.NumEmpty++
 	}
 	comm <- message
+	peer.bufferedPieces = make([]file_writer.PieceData , 0)
 	return
 }
 
@@ -507,7 +456,6 @@ func (peer *Peer) Disconnect() {
 	if peer.Connection != nil {
 		peer.Connection.Close()
 	}
-	//peer.Connection = nil
 	return
 }
 
