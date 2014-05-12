@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+const (
+	SIZE_GIGABYTE = 1024 * 1024 * 1024
+	SIZE_MEGABYTE = 1024 * 1024
+	SIZE_KILOBYTE = 1024
+	SIZE_BYTE     = 1
+)
+
 type LoadBotton struct {
 	button      *gtk.Button
 	filechooser *gtk.FileChooserDialog
@@ -75,7 +82,7 @@ func NewLoadTorrentList(_path string) *LoadTorrentList {
 	text_box := gtk.NewTreeViewColumnWithAttributes("Name", gtk.NewCellRendererText(), "text", 0)
 	text_box.SetResizable(true)
 	text_box.SetSizing(gtk.TREE_VIEW_COLUMN_FIXED)
-	text_box.SetMinWidth(50)
+	text_box.SetMinWidth(150)
 
 	TList.treeview.AppendColumn(text_box)
 
@@ -163,27 +170,44 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 	LoadingWindow.SetSizeRequest(300, 450)
 
 	vbox := gtk.NewVBox(false, 0)
+
+	//the hbox which contains the ok and cancel buttons
+
+	hbox := gtk.NewHBox(false, 10)
+
 	ok_button := gtk.NewButtonWithLabel("OK")
 	ok_button.Clicked(func() {
 		ui.TorrentList.AddTorrentDescription(torrent_path)
 		LoadingWindow.Destroy()
 	})
 
-	vbox.PackEnd(ok_button, false, false, 0)
+	cancel_button := gtk.NewButtonWithLabel("Cancel")
+	cancel_button.Clicked(func() {
+		LoadingWindow.Destroy()
+	})
+
+	hbox.PackEnd(cancel_button, false, false, 0)
+	hbox.PackEnd(ok_button, false, false, 0)
+
+	vbox.PackEnd(hbox, false, false, 0)
 
 	LoadList := NewLoadTorrentList(torrent_path)
-
 	var iter gtk.TreeIter
 
 	fetched_torrent := downloader.New(torrent_path)
 	LoadList.store.Append(&iter)
 
-	size_fetched := fetched_torrent.TorrentInfo.FileInformations.TotalLength
-	fmt.Println(float64(size_fetched) / 1024 / 1024 / 1024)
+	size_fetched := float64(fetched_torrent.TorrentInfo.FileInformations.TotalLength)
 	var column_size_atr string
 
-	if size_fetched >= 1024*1024*1024 {
-		column_size_atr = fmt.Sprintf("%.2f", float64(size_fetched)/1024/1024/1024) + "GB"
+	if size_fetched >= SIZE_GIGABYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_GIGABYTE) + "GB"
+	} else if size_fetched >= SIZE_MEGABYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_MEGABYTE) + "MB"
+	} else if size_fetched >= SIZE_KILOBYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_KILOBYTE) + "KB"
+	} else {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_BYTE) + "Bytes"
 	}
 
 	LoadList.store.Set(&iter,
@@ -350,7 +374,7 @@ func Wrapper() *gtk.Window {
 		var seconds = 0
 		for _ = range ticker.C {
 			seconds++
-			if seconds == 10 {
+			if seconds == 2 {
 				ui.update()
 				seconds = 0
 			}
