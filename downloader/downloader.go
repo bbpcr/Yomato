@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"sync"
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/bitfield"
@@ -51,6 +52,8 @@ type Downloader struct {
 	writerChan     chan file_writer.PieceData
 	connectionChan chan peer.ConnectionCommunication
 	requestChan    chan peer.RequestCommunication
+	
+	Mutex sync.Mutex
 }
 
 func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
@@ -76,6 +79,115 @@ func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded i
 	fmt.Printf("%s %d trackers gave us new %d peers.\n", time.Now().Format("[2006.01.02 15:04:05]"), len(downloader.Trackers), numPeers)
 }
 
+func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
+
+	seeder.Requesting = true
+	time.Sleep(1 * time.Second)
+	startTime := time.Now()
+	for time.Since(startTime) < 30 * time.Second && seeder.PeerChoking && seeder.Status == peer.CONNECTED {
+		err := seeder.SendInterested()
+		if err != nil {
+			break
+		}
+		seeder.ReadMessages(1 , 5 * time.Second)
+	}
+	
+	if seeder.PeerChoking {
+		downloader.Mutex.Lock()
+		delete(downloader.ConnectedPeers, seeder.IP)
+		downloader.DisconnectedPeers[seeder.IP] = seeder
+		downloader.Mutex.Unlock()
+		seeder.Requesting = false
+	} else {
+		go downloader.DownloadFromPeer(seeder)
+	}	
+}
+
+func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
+
+	seeder.Requesting = true
+	for seeder.Status == peer.CONNECTED {	
+
+		downloader.Mutex.Lock()
+		blocks := downloader.Manager.GetNextBlocksToDownload(seeder, 10)
+		if blocks == nil {
+			downloader.Mutex.Unlock()
+			break
+		}
+		smallParams := []int{}
+		for block := 0 ; block < len(blocks) ; block++ {
+			downloader.Manager.BlockDownloading[blocks[block]] = true
+			smallParams = append(smallParams, downloader.Manager.BlockPiece[blocks[block]], downloader.Manager.BlockOffset[blocks[block]], downloader.Manager.BlockBytes[blocks[block]])
+		}
+		downloader.Mutex.Unlock()
+		err := seeder.WriteRequest(smallParams)
+		if err != nil {
+			break
+		}
+		
+		pieces := seeder.ReadMessages(len(blocks) , 3 * time.Second)
+		
+		if len(pieces) > 0 {
+			downloader.Mutex.Lock()
+			for block := 0 ; block < len(blocks) ; block++ {
+				downloader.Manager.BlockDownloading[blocks[block]] = false
+			}
+			for _, pieceData := range pieces {
+				blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
+				pieceLength := len(pieceData.Piece)
+				if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
+					downloader.Manager.BlockBytes[blockIndex] -= pieceLength
+					downloader.Manager.PieceBytes[pieceData.PieceNumber] += pieceLength
+					downloader.Downloaded += int64(pieceLength)
+					downloader.writerChan <- pieceData
+				}
+				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
+					downloader.Bitfield.Set(pieceData.PieceNumber, true)
+				}
+				downloader.Manager.BlockDownloading[blockIndex] = false
+			}
+			downloader.Mutex.Unlock()
+		} else {
+			downloader.Mutex.Lock()
+			for block := 0 ; block < len(blocks) ; block++ {
+				downloader.Manager.BlockDownloading[blocks[block]] = false
+			}
+			downloader.Mutex.Unlock()
+			break
+		}
+		if seeder.PeerChoking {
+			break
+		}
+	}
+	seeder.Requesting = false
+	
+	if seeder.PeerChoking {
+		seeder.SendUninterested()
+		go downloader.ScanForUnchoke(seeder)
+	} else {
+		seeder.Disconnect()
+		downloader.Mutex.Lock()
+		delete(downloader.ConnectedPeers, seeder.IP)
+		downloader.DisconnectedPeers[seeder.IP] = seeder
+		downloader.Mutex.Unlock()
+	}
+				
+	// We try to replace the disconnected seed with another one , so we dont lose speed.
+	var bestUnchoked *peer.Peer = nil				
+	for _, connectedPeer := range downloader.ConnectedPeers {
+		if seeder.IP != connectedPeer.IP && !connectedPeer.Requesting && !connectedPeer.PeerChoking {
+			if bestUnchoked == nil {
+				bestUnchoked = connectedPeer
+			} else if bestUnchoked.ConnectTime > connectedPeer.ConnectTime {
+				bestUnchoked = connectedPeer				
+			}
+		}
+	}
+	if bestUnchoked != nil {
+		go downloader.DownloadFromPeer(bestUnchoked)
+	}
+}
+
 // StartDownloading downloads the motherfucker
 func (downloader *Downloader) StartDownloading() {
 
@@ -99,7 +211,6 @@ func (downloader *Downloader) StartDownloading() {
 	reconnectTicker := time.NewTicker(time.Second * 5)
 	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 	defer ticker.Stop()
-	defer reconnectTicker.Stop()
 
 	go func() {
 		var seconds int = 0
@@ -114,7 +225,7 @@ func (downloader *Downloader) StartDownloading() {
 				if connectedPeer.Requesting {
 					numRequesting ++
 				}
-			}			
+			}		
 			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Peers : %d / %d [Total %d / %d] Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", numRequesting , len(downloader.ConnectedPeers), len(downloader.AlivePeers), len(downloader.ConnectedPeers)+len(downloader.DisconnectedPeers), downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 200 {
 				downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
@@ -124,9 +235,8 @@ func (downloader *Downloader) StartDownloading() {
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
-
+		
 		case _ = <-reconnectTicker.C:
-
 			// This ticker is called every 5 seconds
 			// If we have less than MIN_ACTIVE_CONNECTIONS peers connected , we reconnect all of them.
 			// If that doesnt happen then we choose 3 disconnected peers , and we try to connect them.
@@ -162,32 +272,41 @@ func (downloader *Downloader) StartDownloading() {
 			if connectionMessage.StatusMessage == "OK" {
 			
 				if len(downloader.ConnectedPeers) < MAX_ACTIVE_CONNECTIONS {
+					downloader.Mutex.Lock()
 					downloader.ConnectedPeers[connectionMessage.Peer.IP] = connectionMessage.Peer
 					delete(downloader.DisconnectedPeers, connectionMessage.Peer.IP)
+					downloader.Mutex.Unlock()
 				} else {
-					// find the worst peer
+					// find the worst peer, who isn't requesting
 					var worstPeer *peer.Peer = nil
 					for _ , connectedPeer := range downloader.ConnectedPeers {
 						if worstPeer != nil {
-							if worstPeer.ConnectTime < connectedPeer.ConnectTime {
+							if worstPeer.ConnectTime < connectedPeer.ConnectTime && connectedPeer.PeerChoking {
 								worstPeer = connectedPeer
 							}
-						} else {
+						} else if connectedPeer.PeerChoking {
 							worstPeer = connectedPeer
 						}
 					}
+					
+					if worstPeer == nil {
+					}
+					
 					if worstPeer.ConnectTime > connectionMessage.Peer.ConnectTime {
+						downloader.Mutex.Lock()
 						worstPeer.Disconnect()
 						downloader.DisconnectedPeers[worstPeer.IP] = worstPeer
 						delete(downloader.ConnectedPeers, worstPeer.IP)
 						downloader.ConnectedPeers[connectionMessage.Peer.IP] = connectionMessage.Peer
 						delete(downloader.DisconnectedPeers, connectionMessage.Peer.IP)
+						downloader.Mutex.Unlock()
 					} else {
 						connectionMessage.Peer.Disconnect()
 					}
 				}
 				
 				if connectionMessage.Peer.Status != peer.DISCONNECTED {
+				
 					numRequesting := 0
 					for _ , connectedPeer := range downloader.ConnectedPeers {
 						if connectedPeer.Requesting {
@@ -196,7 +315,9 @@ func (downloader *Downloader) StartDownloading() {
 					}
 					
 					if numRequesting < MAX_ACTIVE_REQUESTS {
-						downloader.startRequesting(connectionMessage.Peer)
+						go downloader.DownloadFromPeer(connectionMessage.Peer)
+					} else {
+						//connectionMessage.Peer.SendUninterested()
 					}
 				}
 				
@@ -204,92 +325,14 @@ func (downloader *Downloader) StartDownloading() {
 			} else {
 				delete(downloader.AlivePeers , connectionMessage.Peer.IP)
 			}
-
-		case piecesMessage, _ := <-downloader.requestChan:
-
-			// On this channel , we receive the data.
-			// We also receive empty pieces just flag them as not downloading.
-
-			for _, pieceData := range piecesMessage.Pieces {
-				blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
-				pieceLength := len(pieceData.Piece)
-				if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
-					downloader.Manager.BlockBytes[blockIndex] -= pieceLength
-					downloader.Manager.PieceBytes[pieceData.PieceNumber] += pieceLength
-					downloader.Downloaded += int64(pieceLength)
-					downloader.writerChan <- pieceData
-				}
-				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
-					downloader.Bitfield.Set(pieceData.PieceNumber, true)
-				}
-				downloader.Manager.BlockDownloading[blockIndex] = false
-			}
-
-			if piecesMessage.NumGood > 0 {
-				downloader.startRequesting(piecesMessage.Peer)
-			} else {
-			
-				// If the peer chokes us then we cant request anymore, so we disconnect.
-				piecesMessage.Peer.Requesting = false
-				piecesMessage.Peer.Disconnect()
-				downloader.DisconnectedPeers[piecesMessage.Peer.IP] = piecesMessage.Peer
-				delete(downloader.ConnectedPeers, piecesMessage.Peer.IP)
-				
-				// We try to replace the disconnected seed with another one , so we dont lose speed.				
-				foundSeed := false
-				for _, connectedPeer := range downloader.ConnectedPeers {
-					if !connectedPeer.Requesting {
-						foundSeed = true
-						go downloader.startRequesting(connectedPeer)
-						break
-					}
-				}
-				// If we didnt find a seed then we connect to another alive peer.
-				if !foundSeed {
-					for _ , alivePeer := range downloader.AlivePeers {
-						if alivePeer.IP != piecesMessage.Peer.IP && alivePeer.Status == peer.DISCONNECTED {
-							go alivePeer.EstablishFullConnection(downloader.connectionChan)
-						}
-					}
-				}
-			}
-
-			// If we receive at least one piece then we are good,
-			// and we request more. If the opposite happens then we reconnect the peer.
 		}
 	}
 
 	downloader.Status = COMPLETED
 	fmt.Printf("Download completeted in %.2f seconds, with average speed %.2f KB/s\n" , time.Since(startedTime).Seconds(), float64(downloader.Downloaded) / time.Since(startedTime).Seconds() / 1024.0)
-	reconnectTicker.Stop()
 	ticker.Stop()
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
-}
-
-func (downloader *Downloader) startRequesting(receivedPeer *peer.Peer) {
-	receivedPeer.Requesting = true
-	requestParams := []int{}
-	for i := 0; i < 2; i++ {
-		fiveBlocks := downloader.Manager.GetNextBlocksToDownload(receivedPeer, 5)
-		if fiveBlocks != nil {
-			smallParams := []int{}
-			for block := 0; block < len(fiveBlocks); block++ {
-				downloader.Manager.BlockDownloading[fiveBlocks[block]] = true
-				smallParams = append(smallParams, downloader.Manager.BlockPiece[fiveBlocks[block]], downloader.Manager.BlockOffset[fiveBlocks[block]], downloader.Manager.BlockBytes[fiveBlocks[block]])
-			}
-			err := receivedPeer.WriteRequest(smallParams)
-			requestParams = append(requestParams, smallParams...)
-			if err != nil {
-				break
-			}
-		} else {
-			break
-		}
-	}
-	if requestParams != nil {
-		go receivedPeer.ReadBlocks(downloader.requestChan, requestParams)
-	}
 }
 
 // New returns a Downloader from a torrent file.

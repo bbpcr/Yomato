@@ -53,7 +53,6 @@ type Peer struct {
 	Requesting       bool
 
 	ConnectTime time.Duration
-	bufferedPieces []file_writer.PieceData
 }
 
 const (
@@ -132,7 +131,11 @@ func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
 func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int, []byte, error) {
 
 	// First we read the first 5 bytes;
-	peer.Connection.SetReadDeadline(time.Now().Add(timeout))
+	if timeout == 0 {
+		peer.Connection.SetReadDeadline(time.Time{})
+	} else {
+		peer.Connection.SetReadDeadline(time.Now().Add(timeout))
+	}
 
 	buffer := make([]byte, maxBufferSize)
 	err := readExactly(peer.Connection, buffer, 5)
@@ -227,13 +230,14 @@ func (peer *Peer) sendInterested() error {
 }
 
 // This function reads messages , and parses them.
-func (peer *Peer) readMessages(maxMessages int) {
+func (peer *Peer) readMessages(maxMessages int , messageTimeoutDuration time.Duration) []file_writer.PieceData {
 
+	pieces := make([]file_writer.PieceData , 0)
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
 		for messageIndex := 0 ; messageIndex < maxMessages; messageIndex ++ {
 		
-			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
+			id, data, err := peer.tryReadMessage(messageTimeoutDuration, 17 * 1024)
 			if err != nil {
 				break
 			}
@@ -263,10 +267,15 @@ func (peer *Peer) readMessages(maxMessages int) {
 				pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[0 : 4]))
 				pieceData.Offset = int(binary.BigEndian.Uint32(data[4 : 8]))
 				pieceData.Piece = data[8: ]
-				peer.bufferedPieces = append(peer.bufferedPieces , pieceData)
+				pieces = append(pieces , pieceData)
 			}
 		}
 	}
+	return pieces
+}
+
+func (peer *Peer) ReadMessages(maxMessages int , timeoutDuration time.Duration) []file_writer.PieceData {
+	return peer.readMessages(maxMessages , timeoutDuration)
 }
 
 // Sends an interested message to the peer.
@@ -420,34 +429,6 @@ func (peer *Peer) SendUninterested() error {
 	return peer.sendUninterested()
 }
 
-func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
-	startTime := time.Now()
-	peer.readMessages(len(params) / 3)
-	message := RequestCommunication{
-		Peer:     peer,
-		Pieces:   nil,
-		NumGood:  0,
-		NumEmpty: 0,
-		Duration: time.Since(startTime),
-	}
-	if peer.bufferedPieces != nil {
-		message.Pieces = append(message.Pieces , peer.bufferedPieces...)
-		message.NumGood = len(peer.bufferedPieces)
-	}
-	
-	for request := 0; request < len(params); request += 3 {
-		var pieceData file_writer.PieceData
-		pieceData.PieceNumber = params[request]
-		pieceData.Offset = params[request+1]
-		pieceData.Piece = nil
-		message.Pieces = append(message.Pieces, pieceData)
-		message.NumEmpty++
-	}
-	comm <- message
-	peer.bufferedPieces = make([]file_writer.PieceData , 0)
-	return
-}
-
 // Disconnect closes the connection of a peer,
 // and sets the status to DISCONNECTED.
 func (peer *Peer) Disconnect() {
@@ -457,10 +438,6 @@ func (peer *Peer) Disconnect() {
 		peer.Connection.Close()
 	}
 	return
-}
-
-func (peer *Peer) TryUpdateStatus() {
-	peer.readMessages(1)
 }
 
 // Establishes full connection with the peer.
@@ -492,7 +469,7 @@ func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 		return
 	}
 
-	peer.readMessages(int(peer.TorrentInfo.FileInformations.PieceCount + 1))
+	peer.readMessages(int(peer.TorrentInfo.FileInformations.PieceCount + 1) , 1 * time.Second)
 
 	peer.Status = CONNECTED
 	peer.ConnectTime = time.Since(startTime)
