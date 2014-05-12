@@ -3,7 +3,6 @@ package user_interface
 import (
 	"fmt"
 	"github.com/bbpcr/Yomato/downloader"
-	"github.com/mattn/go-gtk/gdkpixbuf"
 	"github.com/mattn/go-gtk/glib"
 	"github.com/mattn/go-gtk/gtk"
 	"strconv"
@@ -27,10 +26,11 @@ type UserInterface struct {
 	YDimension   int
 }
 type GTKTorrentList struct {
-	store       *gtk.ListStore
-	treeview    *gtk.TreeView
-	paths       []string
-	downloaders []*downloader.Downloader
+	store         *gtk.ListStore
+	treeview      *gtk.TreeView
+	paths         []string
+	downloaders   []*downloader.Downloader
+	started_paths []bool
 }
 
 func (ui *UserInterface) CreateWindow() {
@@ -40,10 +40,25 @@ func (ui *UserInterface) CreateWindow() {
 func (ui *UserInterface) CreateVBox() {
 	ui.VerticalBox = gtk.NewVBox(false, 1)
 }
-func NewLoadButton(label string) *LoadBotton {
+func DefaultImageBox(StockItem string) *gtk.HBox {
+
+	box1 := gtk.NewHBox(false, 0)
+	box1.SetBorderWidth(2)
+
+	image := gtk.NewImage()
+	image.SetFromPixbuf(gtk.NewImage().RenderIcon(StockItem, gtk.ICON_SIZE_SMALL_TOOLBAR, ""))
+
+	box1.PackStart(image, false, false, 3)
+	box1.ShowAll()
+
+	return box1
+
+}
+func NewLoadButton() *LoadBotton {
 	lb := &LoadBotton{
-		button: gtk.NewButtonWithLabel(label),
+		button: gtk.NewButton(),
 	}
+	lb.button.Add(DefaultImageBox(gtk.STOCK_ADD))
 	return lb
 }
 
@@ -89,11 +104,12 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 		}
 	}
 	Tlist.paths = append(Tlist.paths, TorrentPath)
+	Tlist.started_paths = append(Tlist.started_paths, false)
 	Tlist.downloaders = append(Tlist.downloaders, now_download)
 	torrent_name := now_download.TorrentInfo.FileInformations.RootPath
 
 	Tlist.store.Append(&iter)
-	Tlist.store.Set(&iter, torrent_name, 0, "0.00KB/s")
+	Tlist.store.Set(&iter, torrent_name, 0, "Not Started")
 
 	//This is how we see the attributes
 	/*
@@ -113,6 +129,7 @@ func (ui *UserInterface) CreateFileChooser() {
 		gtk.RESPONSE_ACCEPT)
 
 	//Make sure we accept only .torrent files
+
 	torrentfilter := gtk.NewFileFilter()
 	torrentfilter.AddPattern("*.torrent")
 	torrentfilter.SetName("Torrent Files")
@@ -130,26 +147,7 @@ func (ui *UserInterface) CreateFileChooser() {
 			fmt.Println("loading file...over")
 		}
 	})
-}
-func XpmLabelBox(path, label_text string) (*gtk.HBox, *glib.Error) {
-
-	box1 := gtk.NewHBox(false, 0)
-	box1.SetBorderWidth(2)
-
-	pixbuf, err := gdkpixbuf.NewFromFileAtScale(path, 50, 60, true)
-	if err != nil {
-		return nil, err
-	}
-	image := gtk.NewImage()
-	image.SetFromPixbuf(pixbuf)
-
-	label := gtk.NewLabel(label_text)
-	box1.PackStart(image, false, false, 3)
-	box1.PackStart(label, false, false, 3)
-	box1.ShowAll()
-
-	return box1, nil
-
+	ui.Load.RunFileChooser()
 }
 
 func (ui *UserInterface) AddFirstFrame() {
@@ -164,53 +162,62 @@ func (ui *UserInterface) AddFirstFrame() {
 	hbox.SetSizeRequest(400, 50)
 	hbox.SetBorderWidth(5)
 
-	ui.Load = NewLoadButton("Load File")
+	ui.Load = NewLoadButton()
 
 	ui.Load.button.Clicked(func() {
-		fmt.Println("button clicked:", ui.Load.button.GetLabel())
 
 		ui.CreateFileChooser()
-		ui.Load.RunFileChooser()
+
 	})
-	hbox.PackStart(ui.Load.button, true, false, 0)
+	hbox.PackStart(ui.Load.button, false, false, 0)
 
 	//Make the start button
-	hbox.PackStart(gtk.NewVSeparator(), false, false, 0)
 	start_button := gtk.NewButton()
 	start_button.Connect("clicked", func() {
 
 		//make sure we didn't click start before having some files loaded
-		if len(ui.TorrentList.paths) == 0 {
+		tree_selection := ui.TorrentList.treeview.GetSelection()
+
+		if tree_selection.CountSelectedRows() == 0 {
 			return
 		}
 
-		tree_selection := ui.TorrentList.treeview.GetSelection()
-
-		fmt.Println("pushed the start button")
-
 		var iter gtk.TreeIter
 		tree_selection.GetSelected(&iter)
+
 		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
 		torrent_index, err := strconv.Atoi(torrent_name_str)
 
+		if ui.TorrentList.started_paths[torrent_index] == true {
+			return
+		}
 		if err != nil {
 			return
 		}
 		go func() {
+			ui.TorrentList.started_paths[torrent_index] = true
 			ui.TorrentList.downloaders[torrent_index].StartDownloading()
 		}()
 
-	}, "Download me!")
+	}, "")
 
-	xpm_box, err := XpmLabelBox("user_interface/play.jpg", "Download me!")
-	if err != nil {
-		fmt.Print("Cannot load the start image")
-		return
-	}
-
-	start_button.Add(xpm_box)
+	start_button.Add(DefaultImageBox(gtk.STOCK_GOTO_BOTTOM))
 	hbox.PackStart(start_button, false, false, 0)
 
+	stop_button := gtk.NewButton()
+	stop_button.Add(DefaultImageBox(gtk.STOCK_STOP))
+
+	stop_button.Clicked(func() {
+		if len(ui.TorrentList.paths) == 0 {
+			return
+		}
+		tree_selection := ui.TorrentList.treeview.GetSelection()
+
+		var iter gtk.TreeIter
+		tree_selection.GetSelected(&iter)
+
+	})
+	hbox.PackStart(stop_button, false, false, 0)
 	ui.LoadFrame.Add(hbox)
 	ui.VerticalBox.PackStart(ui.LoadFrame, false, true, 0)
 
@@ -222,21 +229,23 @@ func (ui *UserInterface) update() {
 	var iter gtk.TreeIter
 	ui.TorrentList.store.GetIterFirst(&iter)
 
-	for i := 0; i < len(ui.TorrentList.paths); i++ {
+	number_of_active := len(ui.TorrentList.paths)
+	for i := 0; i < number_of_active; i++ {
 
 		//there's got to be a way to update smarther than this..
 		//shit happens when the loop doesn't end and continues after one torrent is added
 
 		//update the speed
-
+		if ui.TorrentList.started_paths[i] == false {
+			continue
+		}
 		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", ui.TorrentList.downloaders[i].Speed)+"KB/s")
-
 		var current_torrent = ui.TorrentList.downloaders[i]
 
 		var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
 
 		ui.TorrentList.store.SetValue(&iter, 1, attr_value)
-		if i != len(ui.TorrentList.paths)-1 {
+		if i != number_of_active-1 {
 			ui.TorrentList.store.IterNext(&iter)
 		}
 	}
@@ -250,7 +259,9 @@ func Wrapper() *gtk.Window {
 	ui.TorrentList = NewGTKTorrentList()
 	// The frame with the Load Button
 	ui.AddFirstFrame()
-	ui.VerticalBox.Add(ui.TorrentList.treeview)
+	swin := gtk.NewScrolledWindow(nil, nil)
+	swin.Add(ui.TorrentList.treeview)
+	ui.VerticalBox.Add(swin)
 
 	ui.MainWindow.Add(ui.VerticalBox)
 	ui.MainWindow.ShowAll()
