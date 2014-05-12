@@ -33,6 +33,14 @@ type GTKTorrentList struct {
 	started_paths []bool
 }
 
+//this is used to show torrents after pressing the load button
+type LoadTorrentList struct {
+	store    *gtk.ListStore
+	treeview *gtk.TreeView
+	path     string
+	torrent  *downloader.Downloader
+}
+
 func (ui *UserInterface) CreateWindow() {
 	ui.MainWindow = gtk.NewWindow(gtk.WINDOW_TOPLEVEL)
 	ui.MainWindow.SetDefaultSize(ui.XDimension, ui.YDimension)
@@ -52,7 +60,32 @@ func DefaultImageBox(StockItem string) *gtk.HBox {
 	box1.ShowAll()
 
 	return box1
+}
 
+func NewLoadTorrentList(_path string) *LoadTorrentList {
+
+	//name, size, download?
+	TList := &LoadTorrentList{
+		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_STRING, glib.G_TYPE_BOOL),
+		treeview: gtk.NewTreeView(),
+		path:     _path,
+	}
+	TList.treeview.SetModel(TList.store)
+
+	text_box := gtk.NewTreeViewColumnWithAttributes("Name", gtk.NewCellRendererText(), "text", 0)
+	text_box.SetResizable(true)
+	text_box.SetSizing(gtk.TREE_VIEW_COLUMN_FIXED)
+	text_box.SetMinWidth(50)
+
+	TList.treeview.AppendColumn(text_box)
+
+	TList.treeview.AppendColumn(
+		gtk.NewTreeViewColumnWithAttributes("Size", gtk.NewCellRendererText(), "text", 1))
+
+	TList.treeview.AppendColumn(
+		gtk.NewTreeViewColumnWithAttributes("Download", gtk.NewCellRendererToggle(), "active", 2))
+
+	return TList
 }
 func NewLoadButton() *LoadBotton {
 	lb := &LoadBotton{
@@ -120,6 +153,53 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 
 }
 
+func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
+
+	//this is where we show the torrent structure
+
+	LoadingWindow := gtk.NewWindow(gtk.WINDOW_TOPLEVEL)
+	LoadingWindow.SetPosition(gtk.WIN_POS_CENTER_ON_PARENT)
+	LoadingWindow.SetTransientFor(ui.MainWindow)
+	LoadingWindow.SetSizeRequest(300, 450)
+
+	vbox := gtk.NewVBox(false, 0)
+	ok_button := gtk.NewButtonWithLabel("OK")
+	ok_button.Clicked(func() {
+		ui.TorrentList.AddTorrentDescription(torrent_path)
+		LoadingWindow.Destroy()
+	})
+
+	vbox.PackEnd(ok_button, false, false, 0)
+
+	LoadList := NewLoadTorrentList(torrent_path)
+
+	var iter gtk.TreeIter
+
+	fetched_torrent := downloader.New(torrent_path)
+	LoadList.store.Append(&iter)
+
+	size_fetched := fetched_torrent.TorrentInfo.FileInformations.TotalLength
+	fmt.Println(float64(size_fetched) / 1024 / 1024 / 1024)
+	var column_size_atr string
+
+	if size_fetched >= 1024*1024*1024 {
+		column_size_atr = fmt.Sprintf("%.2f", float64(size_fetched)/1024/1024/1024) + "GB"
+	}
+
+	LoadList.store.Set(&iter,
+		fetched_torrent.TorrentInfo.FileInformations.RootPath,
+		column_size_atr,
+		true,
+	)
+
+	swin := gtk.NewScrolledWindow(nil, nil)
+	swin.Add(LoadList.treeview)
+	swin.ShowAll()
+	vbox.Add(swin)
+	LoadingWindow.Add(vbox)
+	LoadingWindow.ShowAll()
+
+}
 func (ui *UserInterface) CreateFileChooser() {
 	ui.Load.filechooser = gtk.NewFileChooserDialog(
 		"Choose Torrent file...",
@@ -141,10 +221,8 @@ func (ui *UserInterface) CreateFileChooser() {
 		is_torrent := (splitted_path[len(splitted_path)-1] == "torrent")
 		if is_torrent == true {
 
-			ui.TorrentList.AddTorrentDescription(torrent_path)
 			ui.Load.filechooser.Destroy()
-
-			fmt.Println("loading file...over")
+			ui.StartLoadingWindow(torrent_path)
 		}
 	})
 	ui.Load.RunFileChooser()
@@ -165,19 +243,16 @@ func (ui *UserInterface) AddFirstFrame() {
 	ui.Load = NewLoadButton()
 
 	ui.Load.button.Clicked(func() {
-
 		ui.CreateFileChooser()
-
 	})
 	hbox.PackStart(ui.Load.button, false, false, 0)
 
-	//Make the start button
+	// gtk-main-start_button
 	start_button := gtk.NewButton()
 	start_button.Connect("clicked", func() {
 
 		//make sure we didn't click start before having some files loaded
 		tree_selection := ui.TorrentList.treeview.GetSelection()
-
 		if tree_selection.CountSelectedRows() == 0 {
 			return
 		}
@@ -185,6 +260,7 @@ func (ui *UserInterface) AddFirstFrame() {
 		var iter gtk.TreeIter
 		tree_selection.GetSelected(&iter)
 
+		//get the torrent details from the store list
 		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
 		torrent_index, err := strconv.Atoi(torrent_name_str)
 
@@ -203,7 +279,9 @@ func (ui *UserInterface) AddFirstFrame() {
 
 	start_button.Add(DefaultImageBox(gtk.STOCK_GOTO_BOTTOM))
 	hbox.PackStart(start_button, false, false, 0)
+	// end start_button
 
+	// gtk-main-stop_button
 	stop_button := gtk.NewButton()
 	stop_button.Add(DefaultImageBox(gtk.STOCK_STOP))
 
@@ -218,6 +296,7 @@ func (ui *UserInterface) AddFirstFrame() {
 
 	})
 	hbox.PackStart(stop_button, false, false, 0)
+	// end stop_button
 	ui.LoadFrame.Add(hbox)
 	ui.VerticalBox.PackStart(ui.LoadFrame, false, true, 0)
 
@@ -231,7 +310,6 @@ func (ui *UserInterface) update() {
 
 	number_of_active := len(ui.TorrentList.paths)
 	for i := 0; i < number_of_active; i++ {
-
 		//there's got to be a way to update smarther than this..
 		//shit happens when the loop doesn't end and continues after one torrent is added
 
@@ -240,8 +318,9 @@ func (ui *UserInterface) update() {
 			continue
 		}
 		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", ui.TorrentList.downloaders[i].Speed)+"KB/s")
-		var current_torrent = ui.TorrentList.downloaders[i]
 
+		//update the progress bar
+		var current_torrent = ui.TorrentList.downloaders[i]
 		var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
 
 		ui.TorrentList.store.SetValue(&iter, 1, attr_value)
@@ -252,12 +331,13 @@ func (ui *UserInterface) update() {
 }
 func Wrapper() *gtk.Window {
 
-	ui := NewUI(700, 300)
+	ui := NewUI(500, 600)
 	ui.CreateWindow()
 	ui.CreateVBox()
 
 	ui.TorrentList = NewGTKTorrentList()
 	// The frame with the Load Button
+
 	ui.AddFirstFrame()
 	swin := gtk.NewScrolledWindow(nil, nil)
 	swin.Add(ui.TorrentList.treeview)
