@@ -42,10 +42,10 @@ type GTKTorrentList struct {
 
 //this is used to show torrents after pressing the load button
 type LoadTorrentList struct {
-	store    *gtk.ListStore
-	treeview *gtk.TreeView
-	path     string
-	torrent  *downloader.Downloader
+	store           *gtk.TreeStore
+	treeview        *gtk.TreeView
+	path            string
+	fetched_torrent *downloader.Downloader
 }
 
 func (ui *UserInterface) CreateWindow() {
@@ -73,9 +73,10 @@ func NewLoadTorrentList(_path string) *LoadTorrentList {
 
 	//name, size, download?
 	TList := &LoadTorrentList{
-		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_STRING, glib.G_TYPE_BOOL),
-		treeview: gtk.NewTreeView(),
-		path:     _path,
+		store:           gtk.NewTreeStore(glib.G_TYPE_STRING, glib.G_TYPE_STRING, glib.G_TYPE_BOOL),
+		treeview:        gtk.NewTreeView(),
+		path:            _path,
+		fetched_torrent: downloader.New(_path),
 	}
 	TList.treeview.SetModel(TList.store)
 
@@ -94,6 +95,7 @@ func NewLoadTorrentList(_path string) *LoadTorrentList {
 
 	return TList
 }
+
 func NewLoadButton() *LoadBotton {
 	lb := &LoadBotton{
 		button: gtk.NewButton(),
@@ -159,7 +161,23 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 	*/
 
 }
+func get_size_in_string(size_checked int64) string {
 
+	var column_size_atr string
+
+	size_fetched := float64(size_checked)
+
+	if size_fetched >= SIZE_GIGABYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_GIGABYTE) + "GB"
+	} else if size_fetched >= SIZE_MEGABYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_MEGABYTE) + "MB"
+	} else if size_fetched >= SIZE_KILOBYTE {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_KILOBYTE) + "KB"
+	} else {
+		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_BYTE) + "Bytes"
+	}
+	return column_size_atr
+}
 func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 
 	//this is where we show the torrent structure
@@ -192,30 +210,64 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 	vbox.PackEnd(hbox, false, false, 0)
 
 	LoadList := NewLoadTorrentList(torrent_path)
+
+	fetched_torrent := LoadList.fetched_torrent
+
 	var iter gtk.TreeIter
-
-	fetched_torrent := downloader.New(torrent_path)
-	LoadList.store.Append(&iter)
-
-	size_fetched := float64(fetched_torrent.TorrentInfo.FileInformations.TotalLength)
-	var column_size_atr string
-
-	if size_fetched >= SIZE_GIGABYTE {
-		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_GIGABYTE) + "GB"
-	} else if size_fetched >= SIZE_MEGABYTE {
-		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_MEGABYTE) + "MB"
-	} else if size_fetched >= SIZE_KILOBYTE {
-		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_KILOBYTE) + "KB"
-	} else {
-		column_size_atr = fmt.Sprintf("%.2f", size_fetched/SIZE_BYTE) + "Bytes"
-	}
+	LoadList.store.Append(&iter, nil)
 
 	LoadList.store.Set(&iter,
 		fetched_torrent.TorrentInfo.FileInformations.RootPath,
-		column_size_atr,
+		get_size_in_string(fetched_torrent.TorrentInfo.FileInformations.TotalLength),
 		true,
 	)
 
+	// Main idea: every filename maps to a node in a tree
+	// If we reached a filename who doesn't have a node in a tree then tie it to it's ancestor
+
+	var tree map[string]*gtk.TreeIter
+	var size_tree map[*gtk.TreeIter]int64
+
+	tree = make(map[string]*gtk.TreeIter)
+	size_tree = make(map[*gtk.TreeIter]int64)
+
+	tree["/"] = &iter
+	size_tree[&iter] = 0
+
+	for _, file_info := range fetched_torrent.TorrentInfo.FileInformations.Files {
+
+		path := strings.Split(file_info.Name, "/")
+		prev_path := ""
+
+		for i := 0; i < len(path); i++ {
+
+			file := path[i]
+			current_path := prev_path + "/" + file
+
+			if _, exists := tree[current_path]; exists == false {
+				//node in the tree not builed
+				iter_prev := tree[prev_path]
+				var cur_iter gtk.TreeIter
+
+				LoadList.store.Append(&cur_iter, iter_prev)
+				LoadList.store.Set(&cur_iter,
+					file,
+					get_size_in_string(file_info.Length),
+					true,
+				)
+				tree[current_path] = &cur_iter
+				size_tree[&cur_iter] = file_info.Length
+
+			} else {
+				//node builded, just update the size
+				size_tree[tree[current_path]] += file_info.Length
+			}
+			prev_path = prev_path + "/" + file
+		}
+	}
+	for key_path := range tree {
+		LoadList.store.SetValue(tree[key_path], 1, get_size_in_string(size_tree[tree[key_path]]))
+	}
 	swin := gtk.NewScrolledWindow(nil, nil)
 	swin.Add(LoadList.treeview)
 	swin.ShowAll()
