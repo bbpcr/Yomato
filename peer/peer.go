@@ -50,6 +50,7 @@ type Peer struct {
 	ClientInterested bool
 	PeerChoking      bool
 	PeerInterested   bool
+	
 	Requesting       bool
 
 	ConnectTime time.Duration

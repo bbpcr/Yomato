@@ -123,17 +123,12 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	seeder.Requesting = true
 	
-	writingError := false
-	readingError := false
-	noPiecesError:= false
-	
 	for seeder.Status == peer.CONNECTED {	
 
 		downloader.pieceLocker.Lock()
 		blocks := downloader.Manager.GetNextBlocksToDownload(seeder, 10)
 		if blocks == nil {
 			downloader.pieceLocker.Unlock()
-			noPiecesError = true
 			break
 		}
 		smallParams := []int{}
@@ -144,7 +139,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		downloader.pieceLocker.Unlock()
 		err := seeder.WriteRequest(smallParams)
 		if err != nil {
-			writingError = true
 			break
 		}
 		
@@ -176,7 +170,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 				downloader.Manager.BlockDownloading[blocks[block]] = false
 			}
 			downloader.pieceLocker.Unlock()
-			readingError = true
 			break
 		}
 		if seeder.PeerChoking {
@@ -188,10 +181,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
 		go downloader.ScanForUnchoke(seeder)
-	} else if noPiecesError {
-		go downloader.DownloadFromPeer(seeder)
-		return
-	} else if writingError || readingError {
+	} else {
 		seeder.Disconnect()
 		downloader.peerLocker.Lock()
 		delete(downloader.ConnectedPeers, seeder.IP)
@@ -199,9 +189,11 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		downloader.peerLocker.Unlock()
 	}
 				
-	// We try to replace the disconnected seed with another one , so we dont lose speed.
-	var bestUnchoked *peer.Peer = nil				
+	numRequesting := 0
+	var bestUnchoked *peer.Peer = nil
+	var bestChoked   *peer.Peer = nil	
 	for _, connectedPeer := range downloader.ConnectedPeers {
+	
 		if seeder.IP != connectedPeer.IP && !connectedPeer.Requesting && !connectedPeer.PeerChoking {
 			if bestUnchoked == nil {
 				bestUnchoked = connectedPeer
@@ -209,9 +201,24 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 				bestUnchoked = connectedPeer				
 			}
 		}
+		
+		if seeder.IP != connectedPeer.IP && !connectedPeer.Requesting && connectedPeer.PeerChoking {
+			if bestChoked == nil {
+				bestChoked = connectedPeer
+			} else if bestChoked.ConnectTime > connectedPeer.ConnectTime {
+				bestChoked = connectedPeer				
+			}
+		}
+		
+		if connectedPeer.Requesting {
+			numRequesting ++
+		}		
 	}
+	
 	if bestUnchoked != nil {
 		go downloader.DownloadFromPeer(bestUnchoked)
+	} else if bestChoked != nil {
+		go downloader.DownloadFromPeer(bestChoked)
 	}
 }
 
@@ -290,6 +297,19 @@ func (downloader *Downloader) StartDownloading() {
 					}
 				}
 			}
+			
+			numRequesting := 0
+			for _ , connectedPeer := range downloader.ConnectedPeers {
+				if connectedPeer.Requesting {
+					numRequesting ++
+				}
+			}
+			for _ , connectedPeer := range downloader.ConnectedPeers {
+				if numRequesting < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Requesting {
+					numRequesting ++
+					go downloader.DownloadFromPeer(connectedPeer)
+				}
+			} 
 
 		case connectionMessage, _ := <-downloader.connectionChan:
 
@@ -313,10 +333,7 @@ func (downloader *Downloader) StartDownloading() {
 						}
 					}
 					
-					if worstPeer == nil {
-					}
-					
-					if worstPeer.ConnectTime > connectionMessage.Peer.ConnectTime {
+					if worstPeer != nil && worstPeer.ConnectTime > connectionMessage.Peer.ConnectTime {
 						downloader.peerLocker.Lock()
 						worstPeer.Disconnect()
 						downloader.DisconnectedPeers[worstPeer.IP] = worstPeer
