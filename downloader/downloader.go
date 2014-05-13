@@ -120,7 +120,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	if seeder.Requesting {
 		return
 	}
-
 	seeder.Requesting = true
 	
 	for seeder.Status == peer.CONNECTED {	
@@ -216,10 +215,15 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	}
 	
 	if bestUnchoked != nil {
-		go downloader.DownloadFromPeer(bestUnchoked)
+		if numRequesting < MAX_ACTIVE_REQUESTS {
+			go downloader.DownloadFromPeer(bestUnchoked)
+		}
 	} else if bestChoked != nil {
-		go downloader.DownloadFromPeer(bestChoked)
+		if numRequesting < MAX_ACTIVE_REQUESTS {
+			go downloader.DownloadFromPeer(bestChoked)
+		}
 	}
+	
 }
 
 // StartDownloading downloads the motherfucker
@@ -237,7 +241,6 @@ func (downloader *Downloader) StartDownloading() {
 	writer := file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
 	go writer.StartWriting(downloader.writerChan)
 
-	startedTime := time.Now()
 
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 
@@ -246,6 +249,7 @@ func (downloader *Downloader) StartDownloading() {
 	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 	defer ticker.Stop()
 
+	startedTime := time.Now()
 	go func() {
 		var seconds int = 0
 		var lastDownloaded int64 = 0
