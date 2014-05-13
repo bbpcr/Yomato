@@ -28,14 +28,14 @@ const (
 
 const (
 	MAX_ACTIVE_REQUESTS    = 30
-	MAX_ACTIVE_CONNECTIONS = 60
-	MAX_NEW_CONNECTIONS    = 3
+	MAX_ACTIVE_CONNECTIONS = 100
+	MAX_NEW_CONNECTIONS    = 20
 	MIN_ACTIVE_CONNECTIONS = 10
 )
 
 const (
 	UNCHOKE_DURATION = 30 * time.Second
-	RECONNECT_DURATION = 5 * time.Second
+	RECONNECT_DURATION = 15 * time.Second
 )
 
 type Downloader struct {
@@ -87,7 +87,6 @@ func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded i
 
 func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 
-	seeder.Requesting = true
 	time.Sleep(1 * time.Second)
 	startTime := time.Now()
 	for time.Since(startTime) < UNCHOKE_DURATION && seeder.PeerChoking && seeder.Status == peer.CONNECTED {
@@ -103,21 +102,38 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 		delete(downloader.ConnectedPeers, seeder.IP)
 		downloader.DisconnectedPeers[seeder.IP] = seeder
 		downloader.peerLocker.Unlock()
-		seeder.Requesting = false
 	} else {
-		go downloader.DownloadFromPeer(seeder)
+		numRequesting := 0
+		for _ , connectedPeer := range downloader.ConnectedPeers {
+			if connectedPeer.Requesting {
+				numRequesting ++
+			}
+		}
+		if numRequesting < MAX_ACTIVE_REQUESTS {
+			go downloader.DownloadFromPeer(seeder)
+		}
 	}	
 }
 
 func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
+	if seeder.Requesting {
+		return
+	}
+
 	seeder.Requesting = true
+	
+	writingError := false
+	readingError := false
+	noPiecesError:= false
+	
 	for seeder.Status == peer.CONNECTED {	
 
 		downloader.pieceLocker.Lock()
 		blocks := downloader.Manager.GetNextBlocksToDownload(seeder, 10)
 		if blocks == nil {
 			downloader.pieceLocker.Unlock()
+			noPiecesError = true
 			break
 		}
 		smallParams := []int{}
@@ -128,6 +144,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		downloader.pieceLocker.Unlock()
 		err := seeder.WriteRequest(smallParams)
 		if err != nil {
+			writingError = true
 			break
 		}
 		
@@ -159,6 +176,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 				downloader.Manager.BlockDownloading[blocks[block]] = false
 			}
 			downloader.pieceLocker.Unlock()
+			readingError = true
 			break
 		}
 		if seeder.PeerChoking {
@@ -170,7 +188,10 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
 		go downloader.ScanForUnchoke(seeder)
-	} else {
+	} else if noPiecesError {
+		go downloader.DownloadFromPeer(seeder)
+		return
+	} else if writingError || readingError {
 		seeder.Disconnect()
 		downloader.peerLocker.Lock()
 		delete(downloader.ConnectedPeers, seeder.IP)
@@ -259,18 +280,15 @@ func (downloader *Downloader) StartDownloading() {
 			} else if connectedPeersCount < MAX_ACTIVE_CONNECTIONS {
 
 				newConnections := 0
-				printString := ""
 				for _, alivePeer := range downloader.AlivePeers {
 					if alivePeer.Status == peer.DISCONNECTED {
 						go alivePeer.EstablishFullConnection(downloader.connectionChan)
 						newConnections++
-						printString += "[" + alivePeer.RemotePeerId + " : " + alivePeer.IP + "] "
 						if newConnections == MAX_NEW_CONNECTIONS {
 							break
 						}
 					}
 				}
-				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), "Connecting to ", printString)
 			}
 
 		case connectionMessage, _ := <-downloader.connectionChan:
