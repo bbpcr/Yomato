@@ -24,6 +24,7 @@ const (
 type ConnectionCommunication struct {
 	Peer          *Peer
 	StatusMessage string
+	Duration      time.Duration
 }
 
 type RequestCommunication struct {
@@ -31,18 +32,28 @@ type RequestCommunication struct {
 	Pieces   []file_writer.PieceData
 	NumGood  int
 	NumEmpty int
+	Duration time.Duration
 }
 
 type Peer struct {
 	IP           string
 	Port         int
-	Connection   net.Conn
+	Connection   *net.TCPConn
 	Protocol     string
 	Status       PeerStatus
 	TorrentInfo  *torrent_info.TorrentInfo
 	LocalPeerId  string
 	RemotePeerId string
 	BitfieldInfo bitfield.Bitfield
+
+	ClientChoking    bool
+	ClientInterested bool
+	PeerChoking      bool
+	PeerInterested   bool
+
+	Requesting bool
+
+	ConnectTime time.Duration
 }
 
 const (
@@ -72,35 +83,33 @@ func (peer *Peer) GetInfo() string {
 	case CONNECTED:
 		infoString += fmt.Sprintln("Status : CONNECTED")
 	case PENDING_HANDSHAKE:
-		infoString += fmt.Sprintln("Status : Pending Handshake")
+		infoString += fmt.Sprintln("Status : HANDSHAKING")
+	case HANDSHAKE:
+		infoString += fmt.Sprintln("Status : HANDSHAKED")
 	default:
 		infoString += fmt.Sprintln("Status : NONE")
 	}
 	infoString += fmt.Sprintln("Local peer ID : ", peer.LocalPeerId)
 	return infoString
 }
-
-// connect tries to get a TCP then an UDP connection for a peer
 func (peer *Peer) connect() error {
-	for _, protocol := range []string{"tcp", "udp"} {
-		conn, err := net.DialTimeout(protocol, fmt.Sprintf("%s:%d", peer.IP, peer.Port), 1*time.Second)
-		if err != nil {
-			continue
-		}
-		if protocol == "tcp" {
-			conn.(*net.TCPConn).SetKeepAlive(true)
-			conn.(*net.TCPConn).SetNoDelay(false)
-			conn.(*net.TCPConn).SetReadBuffer(16 * 1024)
-		} else {
-
-		}
-		peer.Connection = conn
-		return nil
+	tcpAdress, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", peer.IP, peer.Port))
+	if err != nil {
+		return err
 	}
-	return errors.New("Peer not available")
+	tcpConnection, err := net.DialTCP("tcp", nil, tcpAdress)
+	if err != nil {
+		return err
+	}
+	tcpConnection.SetKeepAlive(true)
+	tcpConnection.SetNoDelay(false)
+	tcpConnection.SetReadBuffer(64 * 1024)
+	tcpConnection.SetLinger(0)
+	peer.Connection = tcpConnection
+	return nil
 }
 
-func readExactly(connection net.Conn, buffer []byte, length int) error {
+func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
 	bytesReaded := 0
 
 	if length > len(buffer) || length < 0 {
@@ -123,7 +132,11 @@ func readExactly(connection net.Conn, buffer []byte, length int) error {
 func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int, []byte, error) {
 
 	// First we read the first 5 bytes;
-	peer.Connection.SetReadDeadline(time.Now().Add(timeout))
+	if timeout == 0 {
+		peer.Connection.SetReadDeadline(time.Time{})
+	} else {
+		peer.Connection.SetReadDeadline(time.Now().Add(timeout))
+	}
 
 	buffer := make([]byte, maxBufferSize)
 	err := readExactly(peer.Connection, buffer, 5)
@@ -145,44 +158,13 @@ func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int,
 	return id, buffer[0 : length-1], nil
 }
 
-// Reads all the bitfield and have messages
-// Peers should immediately send his bitfield,
-// so the client knows what pieces the peer has.
-func (peer *Peer) readExistingPieces() error {
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
-
-		// Create the bitfield with the length equal to the number of pieces
-		bitfieldInfo := bitfield.New(int(peer.TorrentInfo.FileInformations.PieceCount))
-
-		for true {
-
-			// Read exactly one message
-			id, data, err := peer.tryReadMessage(1*time.Second, int(bitfieldInfo.Length)+1)
-			if err != nil {
-				break
-			}
-			if id == BITFIELD {
-				bitfieldInfo.Put(data, len(data))
-			} else if id == HAVE {
-				pieceIndex := int(binary.BigEndian.Uint32(data))
-				bitfieldInfo.Set(pieceIndex, true)
-			}
-		}
-		peer.BitfieldInfo = bitfieldInfo
-		return nil
-	}
-	return errors.New("Peer not connected")
-
-}
-
 // Sends and unchoke message to the peer
-// The message is exactly : [0, 0, 0, 1, 1] (first four bytes length = 1 , last byte the id of the message = 1).
+// The message is exactly : [0, 0, 0, 1, 0] (first four bytes length = 1 , last byte the id of the message = 0).
 // Peers wont respond to block requests if they are choked and uninterested.
-func (peer *Peer) sendUnchoke() error {
-
+func (peer *Peer) sendChoke() error {
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
-		buf := []byte{0, 0, 0, 1, 1}
+		buf := []byte{0, 0, 0, 1, CHOKE}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		bytesWritten, err := peer.Connection.Write(buf)
 
@@ -193,6 +175,31 @@ func (peer *Peer) sendUnchoke() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
+		peer.ClientChoking = true
+		return nil
+	}
+	return errors.New("Peer not connected")
+}
+
+// Sends and unchoke message to the peer
+// The message is exactly : [0, 0, 0, 1, 1] (first four bytes length = 1 , last byte the id of the message = 1).
+// Peers wont respond to block requests if they are choked and uninterested.
+func (peer *Peer) sendUnchoke() error {
+
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		buf := []byte{0, 0, 0, 1, UNCHOKE}
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(buf)
+
+		if err != nil || bytesWritten < len(buf) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		peer.ClientChoking = false
 		return nil
 	}
 	return errors.New("Peer not connected")
@@ -217,21 +224,84 @@ func (peer *Peer) sendInterested() error {
 				return errors.New(fmt.Sprintf("Insufficient bytes written"))
 			}
 		}
-
-		// Most peers response immediately with unchoke after sending an unchoke and interested,
-		// Max buffer size should be 5 because unchoke size is 5.
-		id, _, err := peer.tryReadMessage(1*time.Second, 5)
-
-		if err != nil || id != UNCHOKE {
-			if err != nil {
-				return err
-			} else {
-				return errors.New("Didn't receive unchoked")
-			}
-		}
+		peer.ClientInterested = true
 		return nil
 	}
 	return errors.New("Peer not connected")
+}
+
+// This function reads messages , and parses them.
+func (peer *Peer) readMessages(maxMessages int, messageTimeoutDuration time.Duration) []file_writer.PieceData {
+
+	pieces := make([]file_writer.PieceData, 0)
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		for messageIndex := 0; messageIndex < maxMessages; messageIndex++ {
+
+			id, data, err := peer.tryReadMessage(messageTimeoutDuration, 17*1024)
+			if err != nil {
+				break
+			}
+			if id == BITFIELD {
+
+				peer.BitfieldInfo.Put(data, len(data))
+			} else if id == HAVE {
+
+				pieceIndex := int(binary.BigEndian.Uint32(data))
+				peer.BitfieldInfo.Set(pieceIndex, true)
+			} else if id == UNCHOKE {
+
+				peer.PeerChoking = false
+			} else if id == CHOKE {
+
+				peer.PeerChoking = true
+				break
+			} else if id == INTERESTED {
+
+				peer.PeerInterested = true
+			} else if id == NOT_INTERESTED {
+
+				peer.PeerInterested = false
+			} else if id == PIECE {
+
+				var pieceData file_writer.PieceData
+				pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[0:4]))
+				pieceData.Offset = int(binary.BigEndian.Uint32(data[4:8]))
+				pieceData.Piece = data[8:]
+				pieces = append(pieces, pieceData)
+			}
+		}
+	}
+	return pieces
+}
+
+func (peer *Peer) ReadMessages(maxMessages int, timeoutDuration time.Duration) []file_writer.PieceData {
+	return peer.readMessages(maxMessages, timeoutDuration)
+}
+
+// Sends an interested message to the peer.
+// The message is exactly : [0, 0, 0, 1, 3] (first four bytes length = 1 , last byte the id of the message = 3).
+// Peers wont respond to block requests if they are choked and uninterested.
+func (peer *Peer) sendUninterested() error {
+
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		buf := []byte{0, 0, 0, 1, NOT_INTERESTED}
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(buf)
+
+		if err != nil || bytesWritten < len(buf) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		peer.ClientInterested = false
+		return nil
+	}
+	return errors.New("Peer not connected")
+
 }
 
 // Request multiple blocks on the peers
@@ -271,42 +341,6 @@ func convertIntsToByteArray(params ...int) []byte {
 	return buffer
 }
 
-// Reads the piece messages from the connection
-// and returns the bytes like this : [<index1><begin1><length1><block1><index2><begin2><length2><block2>]
-// This function always returs the input parameters in the end with length 0. This helps for unmarking the downloading blocks.
-func (peer *Peer) readBlocks(maxBlocks int) ([]byte, error) {
-
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
-
-		receivedBytes := []byte{}
-
-		for request := 0; request < maxBlocks; request++ {
-
-			// Read on message from the connection , using a 17kb buffer. (One message cannot be higher than 17kb)
-			id, data, err := peer.tryReadMessage(1*time.Second, 17*1024)
-			// If it encounters an error , then we stop reading.
-			if err != nil {
-				break
-			}
-			if id == PIECE {
-				receivedBytes = append(receivedBytes, data[0:8]...)
-				receivedBytes = append(receivedBytes, convertIntsToByteArray(len(data[8:]))...)
-				receivedBytes = append(receivedBytes, data[8:]...)
-			}
-			// Append the bytes
-		}
-
-		// If the length of bytes received is 0 (we didn't read anything)
-		// this returns also an error, so we know to handle the peer differently
-		if len(receivedBytes) == 0 {
-			return nil, errors.New("Nothing readed")
-		} else {
-			return receivedBytes, nil
-		}
-	}
-	return nil, errors.New("Peer not connected")
-}
-
 // Sends a handshake to the peer.
 // This is mandatory to call this first , when initializing a connection with the peer,
 // because it won't response to any message until a handshake has been done.
@@ -315,9 +349,9 @@ func (peer *Peer) sendHandshake() error {
 	if peer.Status == DISCONNECTED {
 		//If the peer is disconnected,
 		//it connects to the ip and port that we have.
+		peer.Status = PENDING_HANDSHAKE
 		err := peer.connect()
 		if err == nil {
-			peer.Status = PENDING_HANDSHAKE
 			return peer.sendHandshake()
 		} else {
 			peer.Disconnect()
@@ -380,6 +414,10 @@ func (peer *Peer) sendHandshake() error {
 	return errors.New("Invalid status")
 }
 
+func (peer *Peer) SendChoke() error {
+	return peer.sendChoke()
+}
+
 func (peer *Peer) SendUnchoke() error {
 	return peer.sendUnchoke()
 }
@@ -388,40 +426,8 @@ func (peer *Peer) SendInterested() error {
 	return peer.sendInterested()
 }
 
-func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
-
-	data, err := peer.readBlocks(len(params) / 3)
-	index := 0
-	message := RequestCommunication{
-		Peer:     peer,
-		Pieces:   nil,
-		NumGood:  0,
-		NumEmpty: 0,
-	}
-	for err == nil && index < len(data) {
-
-		var pieceData file_writer.PieceData
-		pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[index : index+4]))
-		pieceData.Offset = int(binary.BigEndian.Uint32(data[index+4 : index+8]))
-		pieceLength := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
-		index += 12
-		pieceData.Piece = data[index : index+pieceLength]
-		index += pieceLength
-		message.Pieces = append(message.Pieces, pieceData)
-		message.NumGood++
-	}
-
-	//fmt.Println(message.Pieces)
-	for request := 0; request < len(params); request += 3 {
-		var pieceData file_writer.PieceData
-		pieceData.PieceNumber = params[request]
-		pieceData.Offset = params[request+1]
-		pieceData.Piece = nil
-		message.Pieces = append(message.Pieces, pieceData)
-		message.NumEmpty++
-	}
-	comm <- message
-	return
+func (peer *Peer) SendUninterested() error {
+	return peer.sendUninterested()
 }
 
 // Disconnect closes the connection of a peer,
@@ -432,7 +438,6 @@ func (peer *Peer) Disconnect() {
 	if peer.Connection != nil {
 		peer.Connection.Close()
 	}
-	peer.Connection = nil
 	return
 }
 
@@ -441,49 +446,52 @@ func (peer *Peer) Disconnect() {
 // sending unchoke and interested to the peer.
 func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 
-	if peer.Status == CONNECTED || peer.Status == PENDING_HANDSHAKE || peer.Status == HANDSHAKED {
+	if !(peer.Status == DISCONNECTED) {
 		return
 	}
-
+	startTime := time.Now()
 	err := peer.sendHandshake()
 	if err != nil {
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
-		return
-	}
-
-	err = peer.readExistingPieces()
-	if err != nil {
-		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	err = peer.sendUnchoke()
 	if err != nil {
 		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
 	err = peer.sendInterested()
 	if err != nil {
 		peer.Disconnect()
-		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error()}
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
 
+	peer.readMessages(int(peer.TorrentInfo.FileInformations.PieceCount+1), 1*time.Second)
+
 	peer.Status = CONNECTED
-	comm <- ConnectionCommunication{peer, "OK"}
+	peer.ConnectTime = time.Since(startTime)
+	comm <- ConnectionCommunication{peer, "OK", time.Since(startTime)}
 	return
 }
 
 // New returns a peer with given description
 func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port int) Peer {
 	return Peer{
-		IP:          ip,
-		Port:        port,
-		Status:      DISCONNECTED,
-		TorrentInfo: torrentInfo,
-		LocalPeerId: peerId,
+		IP:               ip,
+		Port:             port,
+		Status:           DISCONNECTED,
+		TorrentInfo:      torrentInfo,
+		LocalPeerId:      peerId,
+		BitfieldInfo:     bitfield.New(int(torrentInfo.FileInformations.PieceCount)),
+		ClientChoking:    true,
+		ClientInterested: false,
+		PeerChoking:      true,
+		PeerInterested:   false,
+		Requesting:       false,
+		ConnectTime:      time.Second * 10000,
 	}
 }

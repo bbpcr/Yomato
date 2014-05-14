@@ -1,6 +1,10 @@
 package piece_manager
 
 import (
+	"errors"
+	"sync"
+
+	"github.com/bbpcr/Yomato/file_writer"
 	"github.com/bbpcr/Yomato/peer"
 	"github.com/bbpcr/Yomato/torrent_info"
 )
@@ -10,16 +14,18 @@ const (
 )
 
 type PieceManager struct {
-	BlockBytes       map[int]int  //tells me how much i need to download from a block [block:bytes]
-	BlockOffset      map[int]int  //tells me the offset of the block in piece [block:pieceOffset]
-	BlockDownloading map[int]bool //tells me if a block is downloading [block:true/false]
-	BlockPiece       map[int]int  //tells me what piece the block belongs [block:piece]
-	PieceBytes       map[int]int  //tells me how much i downloaded from a piece [piece:bytes]
+	blockBytes       map[int]int  //tells me how much i need to download from a block [block:bytes]
+	blockOffset      map[int]int  //tells me the offset of the block in piece [block:pieceOffset]
+	blockDownloading map[int]bool //tells me if a block is downloading [block:true/false]
+	blockPiece       map[int]int  //tells me what piece the block belongs [block:piece]
+	pieceBytes       map[int]int  //tells me how much i downloaded from a piece [piece:bytes]
 	pieceNumBlocks   map[int]int  //tells me how many blocks a piece has until his position [piece:numBlocks]
+	rwMutex          sync.RWMutex
 	//These should be maps because, if a value doesnt exist then we dont download it.
 }
 
 func (manager PieceManager) GetBlockIndex(pieceIndex int, offsetIndex int) int {
+
 	startPosition := manager.pieceNumBlocks[pieceIndex]
 	howMany := offsetIndex / BLOCK_LENGTH
 	startPosition += howMany
@@ -29,11 +35,11 @@ func (manager PieceManager) GetBlockIndex(pieceIndex int, offsetIndex int) int {
 func New(torrentInfo *torrent_info.TorrentInfo) PieceManager {
 
 	manager := PieceManager{
-		BlockBytes:       make(map[int]int),
-		BlockOffset:      make(map[int]int),
-		BlockDownloading: make(map[int]bool),
-		BlockPiece:       make(map[int]int),
-		PieceBytes:       make(map[int]int),
+		blockBytes:       make(map[int]int),
+		blockOffset:      make(map[int]int),
+		blockDownloading: make(map[int]bool),
+		blockPiece:       make(map[int]int),
+		pieceBytes:       make(map[int]int),
 		pieceNumBlocks:   make(map[int]int),
 	}
 
@@ -51,21 +57,21 @@ func New(torrentInfo *torrent_info.TorrentInfo) PieceManager {
 		offset := 0
 
 		for blockPosition := 0; blockPosition < int(numBlocks); blockPosition++ {
-			manager.BlockBytes[blockIndex] = BLOCK_LENGTH
-			manager.BlockDownloading[blockIndex] = false
-			manager.BlockPiece[blockIndex] = pieceIndex
-			manager.BlockOffset[blockIndex] = offset
+			manager.blockBytes[blockIndex] = BLOCK_LENGTH
+			manager.blockDownloading[blockIndex] = false
+			manager.blockPiece[blockIndex] = pieceIndex
+			manager.blockOffset[blockIndex] = offset
 			blockIndex++
 			offset += BLOCK_LENGTH
 		}
 
-		manager.PieceBytes[pieceIndex] = 0
+		manager.pieceBytes[pieceIndex] = 0
 
 		if lastBlockSize != 0 {
-			manager.BlockBytes[blockIndex] = int(lastBlockSize)
-			manager.BlockDownloading[blockIndex] = false
-			manager.BlockPiece[blockIndex] = pieceIndex
-			manager.BlockOffset[blockIndex] = offset
+			manager.blockBytes[blockIndex] = int(lastBlockSize)
+			manager.blockDownloading[blockIndex] = false
+			manager.blockPiece[blockIndex] = pieceIndex
+			manager.blockOffset[blockIndex] = offset
 			blockIndex++
 		}
 	}
@@ -77,30 +83,75 @@ func New(torrentInfo *torrent_info.TorrentInfo) PieceManager {
 // Sequentially (NOT good, easy for development)
 // or randomized (much better)
 func (manager PieceManager) GetNextBlocksToDownload(for_peer *peer.Peer, maxBlocks int) []int {
-	var blocks []int = nil
-	for block, count := 0, 0; block < len(manager.BlockDownloading) && count < maxBlocks; block++ {
-		_, exists := manager.BlockBytes[block]
-		if exists && !manager.BlockDownloading[block] && for_peer.BitfieldInfo.At(manager.BlockPiece[block]) && manager.BlockBytes[block] > 0 {
+
+	blocks := []int{}
+	for block, count := 0, 0; block < len(manager.blockDownloading) && count < maxBlocks; block++ {
+		_, exists := manager.blockBytes[block]
+		if exists && !manager.blockDownloading[block] && for_peer.BitfieldInfo.At(manager.blockPiece[block]) && manager.blockBytes[block] > 0 {
 			blocks = append(blocks, block)
 			count++
 		}
 	}
+
+	if len(blocks) < maxBlocks {
+		for block, count := 0, len(blocks); block < len(manager.blockDownloading) && count < maxBlocks; block++ {
+			_, exists := manager.blockBytes[block]
+			if exists && for_peer.BitfieldInfo.At(manager.blockPiece[block]) && manager.blockBytes[block] > 0 {
+				blocks = append(blocks, block)
+				count++
+			}
+		}
+	}
+
 	return blocks
 }
 
-func (manager PieceManager) IsPieceCompleted(pieceIndex int, torrentInfo *torrent_info.TorrentInfo) bool {
+func (manager *PieceManager) UpdatePiece(pieceData file_writer.PieceData) error {
 
+	manager.rwMutex.Lock()
+	defer manager.rwMutex.Unlock()
+	blockIndex := manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
+	pieceLength := len(pieceData.Piece)
+	if manager.blockBytes[blockIndex] > 0 && pieceLength > 0 {
+		manager.blockBytes[blockIndex] -= pieceLength
+		manager.pieceBytes[pieceData.PieceNumber] += pieceLength
+	} else {
+		return errors.New("Piece wasn't updated due to invalid params or piece already updated")
+	}
+	return nil
+}
+
+func (manager *PieceManager) SetPieceDownloading(pieceData file_writer.PieceData, value bool) {
+	manager.rwMutex.Lock()
+	defer manager.rwMutex.Unlock()
+	blockIndex := manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
+	manager.blockDownloading[blockIndex] = value
+}
+
+func (manager *PieceManager) SetBlockDownloading(blockIndex int, value bool) {
+	manager.rwMutex.Lock()
+	defer manager.rwMutex.Unlock()
+	manager.blockDownloading[blockIndex] = value
+}
+
+func (manager PieceManager) MakeRequest(blockIndex int) (int, int, int) {
+
+	pieceIndex := manager.blockPiece[blockIndex]
+	pieceOffset := manager.blockOffset[blockIndex]
+	pieceLength := manager.blockBytes[blockIndex]
+	return pieceIndex, pieceOffset, pieceLength
+}
+
+func (manager PieceManager) IsPieceCompleted(pieceIndex int, torrentInfo *torrent_info.TorrentInfo) bool {
 	if pieceIndex == int(torrentInfo.FileInformations.PieceCount-1) {
-		// If it's the last piece , we need to treat it better.
-		// The last piece has lesser size
 		if torrentInfo.FileInformations.PieceCount >= 2 {
 			lastPieceLength := torrentInfo.FileInformations.TotalLength - torrentInfo.FileInformations.PieceLength*(torrentInfo.FileInformations.PieceCount-1)
-			if int64(manager.PieceBytes[pieceIndex]) >= lastPieceLength {
+			if int64(manager.pieceBytes[pieceIndex]) >= lastPieceLength {
 				return true
 			}
 		}
 
-	} else if int64(manager.PieceBytes[pieceIndex]) >= torrentInfo.FileInformations.PieceLength {
+	} else if int64(manager.pieceBytes[pieceIndex]) >= torrentInfo.FileInformations.PieceLength {
 		return true
 	}
 	return false

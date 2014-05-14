@@ -14,15 +14,14 @@ type Bitfield struct {
 }
 
 func New(length int) Bitfield {
-
+	var bitfield Bitfield
 	if length%8 == 0 {
-		bitfield := Bitfield{make([]uint8, length/8), uint(length), uint(length), 0}
-		return bitfield
+		bitfield = Bitfield{make([]uint8, length/8), uint(length), uint(length), 0}
 	} else {
-		bitfield := Bitfield{make([]uint8, length/8+1), uint(length), uint(length), 0}
-		return bitfield
+		bitfield = Bitfield{make([]uint8, length/8+1), uint(length), uint(length), 0}
 	}
-	return Bitfield{}
+	return bitfield
+
 }
 
 // Return true if the position `pos` is ON and false otherwise
