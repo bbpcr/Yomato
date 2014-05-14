@@ -47,6 +47,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
 	qs.Add("event", "started")
+	qs.Add("compact", "0")
 
 	requestUrl, err := url.Parse(announceUrl + "?" + qs.Encode())
 
