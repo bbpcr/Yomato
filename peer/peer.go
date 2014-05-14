@@ -50,8 +50,8 @@ type Peer struct {
 	ClientInterested bool
 	PeerChoking      bool
 	PeerInterested   bool
-	
-	Requesting       bool
+
+	Requesting bool
 
 	ConnectTime time.Duration
 }
@@ -231,52 +231,52 @@ func (peer *Peer) sendInterested() error {
 }
 
 // This function reads messages , and parses them.
-func (peer *Peer) readMessages(maxMessages int , messageTimeoutDuration time.Duration) []file_writer.PieceData {
+func (peer *Peer) readMessages(maxMessages int, messageTimeoutDuration time.Duration) []file_writer.PieceData {
 
-	pieces := make([]file_writer.PieceData , 0)
+	pieces := make([]file_writer.PieceData, 0)
 	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
 
-		for messageIndex := 0 ; messageIndex < maxMessages; messageIndex ++ {
-		
-			id, data, err := peer.tryReadMessage(messageTimeoutDuration, 17 * 1024)
+		for messageIndex := 0; messageIndex < maxMessages; messageIndex++ {
+
+			id, data, err := peer.tryReadMessage(messageTimeoutDuration, 17*1024)
 			if err != nil {
 				break
 			}
 			if id == BITFIELD {
-			
-				peer.BitfieldInfo.Put(data, len(data))				
+
+				peer.BitfieldInfo.Put(data, len(data))
 			} else if id == HAVE {
-			
+
 				pieceIndex := int(binary.BigEndian.Uint32(data))
 				peer.BitfieldInfo.Set(pieceIndex, true)
 			} else if id == UNCHOKE {
-			
+
 				peer.PeerChoking = false
 			} else if id == CHOKE {
-			
+
 				peer.PeerChoking = true
 				break
 			} else if id == INTERESTED {
-			
+
 				peer.PeerInterested = true
 			} else if id == NOT_INTERESTED {
-			
+
 				peer.PeerInterested = false
 			} else if id == PIECE {
-			
+
 				var pieceData file_writer.PieceData
-				pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[0 : 4]))
-				pieceData.Offset = int(binary.BigEndian.Uint32(data[4 : 8]))
-				pieceData.Piece = data[8: ]
-				pieces = append(pieces , pieceData)
+				pieceData.PieceNumber = int(binary.BigEndian.Uint32(data[0:4]))
+				pieceData.Offset = int(binary.BigEndian.Uint32(data[4:8]))
+				pieceData.Piece = data[8:]
+				pieces = append(pieces, pieceData)
 			}
 		}
 	}
 	return pieces
 }
 
-func (peer *Peer) ReadMessages(maxMessages int , timeoutDuration time.Duration) []file_writer.PieceData {
-	return peer.readMessages(maxMessages , timeoutDuration)
+func (peer *Peer) ReadMessages(maxMessages int, timeoutDuration time.Duration) []file_writer.PieceData {
+	return peer.readMessages(maxMessages, timeoutDuration)
 }
 
 // Sends an interested message to the peer.
@@ -470,7 +470,7 @@ func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 		return
 	}
 
-	peer.readMessages(int(peer.TorrentInfo.FileInformations.PieceCount + 1) , 1 * time.Second)
+	peer.readMessages(int(peer.TorrentInfo.FileInformations.PieceCount+1), 1*time.Second)
 
 	peer.Status = CONNECTED
 	peer.ConnectTime = time.Since(startTime)
