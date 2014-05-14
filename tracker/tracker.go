@@ -53,7 +53,7 @@ func readPeersFromAnnouncer(announceUrl string, peerID string, infoHash string, 
 	qs.Add("uploaded", fmt.Sprintf("%d", uploaded))
 	qs.Add("downloaded", fmt.Sprintf("%d", downloaded))
 	qs.Add("left", fmt.Sprintf("%d", left))
-	qs.Add("compact", fmt.Sprintf("%d", 1))
+	qs.Add("compact", "1")
 	switch event {
 	case DOWNLOAD_STARTED:
 		qs.Add("event", "started")
