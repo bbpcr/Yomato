@@ -85,8 +85,6 @@ func New(torrentInfo *torrent_info.TorrentInfo) PieceManager {
 func (manager PieceManager) GetNextBlocksToDownload(for_peer *peer.Peer, maxBlocks int) []int {
 
 	blocks := []int{}
-	manager.rwMutex.RLock()
-	defer manager.rwMutex.RUnlock()
 	for block, count := 0, 0; block < len(manager.blockDownloading) && count < maxBlocks; block++ {
 		_, exists := manager.blockBytes[block]
 		if exists && !manager.blockDownloading[block] && for_peer.BitfieldInfo.At(manager.blockPiece[block]) && manager.blockBytes[block] > 0 {
@@ -138,8 +136,6 @@ func (manager *PieceManager) SetBlockDownloading(blockIndex int, value bool) {
 
 func (manager PieceManager) MakeRequest(blockIndex int) (int, int, int) {
 
-	manager.rwMutex.RLock()
-	defer manager.rwMutex.RUnlock()
 	pieceIndex := manager.blockPiece[blockIndex]
 	pieceOffset := manager.blockOffset[blockIndex]
 	pieceLength := manager.blockBytes[blockIndex]
@@ -147,9 +143,6 @@ func (manager PieceManager) MakeRequest(blockIndex int) (int, int, int) {
 }
 
 func (manager PieceManager) IsPieceCompleted(pieceIndex int, torrentInfo *torrent_info.TorrentInfo) bool {
-
-	manager.rwMutex.RLock()
-	defer manager.rwMutex.RUnlock()
 	if pieceIndex == int(torrentInfo.FileInformations.PieceCount-1) {
 		if torrentInfo.FileInformations.PieceCount >= 2 {
 			lastPieceLength := torrentInfo.FileInformations.TotalLength - torrentInfo.FileInformations.PieceLength*(torrentInfo.FileInformations.PieceCount-1)
