@@ -411,7 +411,6 @@ func (peer *Peer) ReadBlocks(comm chan RequestCommunication, params []int) {
 		message.NumGood++
 	}
 
-	//fmt.Println(message.Pieces)
 	for request := 0; request < len(params); request += 3 {
 		var pieceData file_writer.PieceData
 		pieceData.PieceNumber = params[request]

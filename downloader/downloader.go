@@ -108,17 +108,20 @@ func (downloader *Downloader) StartDownloading() {
 
 			for _, pieceData := range piecesMessage.Pieces {
 				blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
+				if blockIndex == -1 {
+					continue
+				}
+
 				pieceLength := len(pieceData.Piece)
-				if downloader.Manager.BlockBytes[blockIndex] > 0 && pieceLength > 0 {
-					downloader.Manager.BlockBytes[blockIndex] -= pieceLength
-					downloader.Manager.PieceBytes[pieceData.PieceNumber] += pieceLength
+				if downloader.Manager.BlockSizeCoresponds(blockIndex, pieceLength) {
+					downloader.Manager.MarkBlockDownloaded(blockIndex)
 					downloader.Downloaded += int64(pieceLength)
 					downloader.writerChan <- pieceData
 				}
 				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
 					downloader.Bitfield.Set(pieceData.PieceNumber, true)
 				}
-				downloader.Manager.BlockDownloading[blockIndex] = false
+				downloader.Manager.SetBlockDownloading(blockIndex, false)
 			}
 
 			// If we receive at least one piece then we are good,
@@ -143,14 +146,14 @@ func (downloader *Downloader) startRequesting(receivedPeer *peer.Peer) {
 	now := time.Now()
 	requestParams := []int{}
 	for time.Since(now) <= 20*time.Microsecond {
-		fiveBlocks := downloader.Manager.GetNextBlocksToDownload(receivedPeer, 5)
+		fiveBlocks := downloader.Manager.GetNextBlocksToDownload(&receivedPeer.BitfieldInfo, 5)
 		if fiveBlocks == nil {
 			break
 		}
 		smallParams := []int{}
 		for block := 0; block < len(fiveBlocks); block++ {
-			downloader.Manager.BlockDownloading[fiveBlocks[block]] = true
-			smallParams = append(smallParams, downloader.Manager.BlockPiece[fiveBlocks[block]], downloader.Manager.BlockOffset[fiveBlocks[block]], downloader.Manager.BlockBytes[fiveBlocks[block]])
+			downloader.Manager.SetBlockDownloading(fiveBlocks[block], true)
+			smallParams = append(smallParams, downloader.Manager.RequestBlockInformation(fiveBlocks[block])...)
 		}
 		err := receivedPeer.WriteRequest(smallParams)
 		requestParams = append(requestParams, smallParams...)
