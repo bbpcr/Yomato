@@ -266,6 +266,7 @@ func (downloader *Downloader) StartDownloading() {
 	go func() {
 		var seconds int = 0
 		var lastDownloaded int64 = downloader.Manager.BytesDownloaded()
+		downloader.model.BeginTransaction()
 		for _ = range ticker.C {
 			seconds += 2
 			downloader.Speed = float64(downloader.Manager.BytesDownloaded()-lastDownloaded) / 1024.0
@@ -283,7 +284,12 @@ func (downloader *Downloader) StartDownloading() {
 				downloader.requestPeers(downloader.Manager.BytesDownloaded(), 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Manager.BytesDownloaded(), tracker.NONE)
 				seconds = 0
 			}
+
+			downloader.model.CommitTransaction()
+			downloader.model.BeginTransaction()
 		}
+
+		downloader.model.CommitTransaction()
 	}()
 
 	defer ticker.Stop()
