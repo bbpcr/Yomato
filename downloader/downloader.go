@@ -119,7 +119,6 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 }
 
 func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
-
 	if seeder.Requesting {
 		return
 	}
@@ -445,8 +444,6 @@ func (downloader *Downloader) StartDownloading() {
 			}
 		}
 	}
-
-	close(downloader.writeDoneChan)
 
 	downloader.Status = COMPLETED
 	ticker.Stop()
