@@ -158,6 +158,25 @@ func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int,
 	return id, buffer[0 : length-1], nil
 }
 
+func (peer *Peer) sendKeepAlive() error {
+	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+
+		buf := []byte{0, 0, 0, 0}
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(buf)
+
+		if err != nil || bytesWritten < len(buf) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		return nil
+	}
+	return errors.New("Peer not connected")
+}
+
 // Sends and unchoke message to the peer
 // The message is exactly : [0, 0, 0, 1, 0] (first four bytes length = 1 , last byte the id of the message = 0).
 // Peers wont respond to block requests if they are choked and uninterested.
@@ -412,6 +431,10 @@ func (peer *Peer) sendHandshake() error {
 		return nil
 	}
 	return errors.New("Invalid status")
+}
+
+func (peer *Peer) SendKeepAlive() error {
+	return peer.sendKeepAlive()
 }
 
 func (peer *Peer) SendChoke() error {

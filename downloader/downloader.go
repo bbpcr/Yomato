@@ -34,8 +34,9 @@ const (
 )
 
 const (
-	UNCHOKE_DURATION   = 30 * time.Second
-	RECONNECT_DURATION = 15 * time.Second
+	UNCHOKE_DURATION    = 30 * time.Second
+	RECONNECT_DURATION  = 15 * time.Second
+	KEEP_ALIVE_DURATION = 60 * time.Second
 )
 
 type Downloader struct {
@@ -93,7 +94,7 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 		if err != nil {
 			break
 		}
-		seeder.ReadMessages(1, 5*time.Second)
+		seeder.ReadMessages(1, 5 * time.Second)
 	}
 
 	if seeder.PeerChoking {
@@ -165,7 +166,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 			break
 		}
 	}
-	seeder.Requesting = false
 
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
@@ -213,7 +213,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 			go downloader.DownloadFromPeer(bestChoked)
 		}
 	}
-
+	seeder.Requesting = false
 }
 
 // StartDownloading downloads the motherfucker
@@ -234,9 +234,12 @@ func (downloader *Downloader) StartDownloading() {
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 
 	ticker := time.NewTicker(time.Second * 2)
-	reconnectTicker := time.NewTicker(RECONNECT_DURATION)
-	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 	defer ticker.Stop()
+	reconnectTicker := time.NewTicker(RECONNECT_DURATION)
+	defer reconnectTicker.Stop()
+	keepAliveTicker := time.NewTicker(KEEP_ALIVE_DURATION)
+	defer keepAliveTicker.Stop()
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 
 	startedTime := time.Now()
 	go func() {
@@ -256,12 +259,31 @@ func (downloader *Downloader) StartDownloading() {
 			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Peers : %d / %d [Total %d / %d] Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", numRequesting, len(downloader.ConnectedPeers), len(downloader.AlivePeers), len(downloader.ConnectedPeers)+len(downloader.DisconnectedPeers), downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 200 {
 				downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
+				seconds = 0
 			}
 		}
 	}()
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
+		
+		case _ = <- keepAliveTicker.C:
+			
+			numSent := 0
+			for _ , connectedPeer := range downloader.ConnectedPeers {
+				if !connectedPeer.Requesting {
+					go func(){
+						if err := connectedPeer.SendKeepAlive() ; err != nil {
+							downloader.peerLocker.Lock()
+							downloader.DisconnectedPeers[connectedPeer.IP] = connectedPeer
+							delete(downloader.ConnectedPeers, connectedPeer.IP)
+							downloader.peerLocker.Unlock()
+						}
+					}()
+					numSent ++
+				}
+			}
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]") , fmt.Sprintf("Sending keep alive to %d connected peers" , numSent))
 
 		case _ = <-reconnectTicker.C:
 			// This ticker is called every 5 seconds
@@ -289,6 +311,7 @@ func (downloader *Downloader) StartDownloading() {
 						}
 					}
 				}
+				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Trying %d new connections" , newConnections))
 			}
 
 			numRequesting := 0
@@ -363,9 +386,11 @@ func (downloader *Downloader) StartDownloading() {
 	}
 
 	downloader.Status = COMPLETED
-	fmt.Printf("Download completeted in %.2f seconds, with average speed %.2f KB/s\n", time.Since(startedTime).Seconds(), float64(downloader.Downloaded)/time.Since(startedTime).Seconds()/1024.0)
 	ticker.Stop()
-	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
+	reconnectTicker.Stop()
+	keepAliveTicker.Stop()
+	fmt.Printf("Download completeted in %.2f seconds, with average speed %.2f KB/s\n", time.Since(startedTime).Seconds(), float64(downloader.Downloaded)/time.Since(startedTime).Seconds()/1024.0)
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
 }
 
