@@ -61,7 +61,7 @@ type Downloader struct {
 	peerLocker sync.Mutex
 }
 
-func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
+func (downloader *Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
 
 	// Request the peers , from the tracker
 	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size.
@@ -86,40 +86,51 @@ func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded i
 
 func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 
+	if seeder.Active || seeder.Downloading {
+		return
+	}
+
+	seeder.Active = true
+
 	time.Sleep(1 * time.Second)
 	startTime := time.Now()
 	for time.Since(startTime) < UNCHOKE_DURATION && seeder.PeerChoking && seeder.Status == peer.CONNECTED {
 		err := seeder.SendInterested()
 		if err != nil {
+			seeder.Disconnect()
 			break
 		}
 		seeder.ReadMessages(1, 5*time.Second)
 	}
-
-	if seeder.PeerChoking {
+	if seeder.Status == peer.CONNECTED {
+		if !seeder.PeerChoking {
+			numRequesting := 0
+			for _, connectedPeer := range downloader.ConnectedPeers {
+				if connectedPeer.Downloading {
+					numRequesting++
+				}
+			}
+			if numRequesting < MAX_ACTIVE_REQUESTS {
+				go downloader.DownloadFromPeer(seeder)
+			}
+		}
+	} else {
+		seeder.Disconnect()
 		downloader.peerLocker.Lock()
 		delete(downloader.ConnectedPeers, seeder.IP)
 		downloader.DisconnectedPeers[seeder.IP] = seeder
 		downloader.peerLocker.Unlock()
-	} else {
-		numRequesting := 0
-		for _, connectedPeer := range downloader.ConnectedPeers {
-			if connectedPeer.Requesting {
-				numRequesting++
-			}
-		}
-		if numRequesting < MAX_ACTIVE_REQUESTS {
-			go downloader.DownloadFromPeer(seeder)
-		}
 	}
+	seeder.Active = false
 }
 
+// This function , start downloading from a peer.
 func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
-	if seeder.Requesting {
+	if seeder.Downloading || seeder.Active {
 		return
 	}
-	seeder.Requesting = true
+	seeder.Downloading = true
 
 	for seeder.Status == peer.CONNECTED {
 
@@ -166,6 +177,9 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		}
 	}
 
+	// If the peer gets choked , we try to
+	// wait and see if it gets unchoked.
+	// If another error occurs we disconnect the peer.
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
 		go downloader.ScanForUnchoke(seeder)
@@ -177,12 +191,18 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		downloader.peerLocker.Unlock()
 	}
 
+	// Whatever happens , we need to keep requesting,
+	// so we replace the current seed with another seed,
+	// if we can
 	numRequesting := 0
 	var bestUnchoked *peer.Peer = nil
 	var bestChoked *peer.Peer = nil
+	// We need to find the best peer who isn't unchoked and currently downloading
+	// and we need to find the best peer who is choked to use him in case we dont find
+	// an unchoked peer.
 	for _, connectedPeer := range downloader.ConnectedPeers {
 
-		if seeder.IP != connectedPeer.IP && !connectedPeer.Requesting && !connectedPeer.PeerChoking {
+		if seeder.IP != connectedPeer.IP && !connectedPeer.Downloading && !connectedPeer.PeerChoking {
 			if bestUnchoked == nil {
 				bestUnchoked = connectedPeer
 			} else if bestUnchoked.ConnectTime > connectedPeer.ConnectTime {
@@ -190,7 +210,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 			}
 		}
 
-		if seeder.IP != connectedPeer.IP && !connectedPeer.Requesting && connectedPeer.PeerChoking {
+		if seeder.IP != connectedPeer.IP && !connectedPeer.Downloading && connectedPeer.PeerChoking && !connectedPeer.Active {
 			if bestChoked == nil {
 				bestChoked = connectedPeer
 			} else if bestChoked.ConnectTime > connectedPeer.ConnectTime {
@@ -198,7 +218,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 			}
 		}
 
-		if connectedPeer.Requesting {
+		if connectedPeer.Downloading {
 			numRequesting++
 		}
 	}
@@ -208,11 +228,9 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 			go downloader.DownloadFromPeer(bestUnchoked)
 		}
 	} else if bestChoked != nil {
-		if numRequesting < MAX_ACTIVE_REQUESTS {
-			go downloader.DownloadFromPeer(bestChoked)
-		}
+		go downloader.ScanForUnchoke(bestChoked)
 	}
-	seeder.Requesting = false
+	seeder.Downloading = false
 }
 
 // StartDownloading downloads the motherfucker
@@ -251,7 +269,7 @@ func (downloader *Downloader) StartDownloading() {
 			lastDownloaded = downloader.Downloaded
 			numRequesting := 0
 			for _, connectedPeer := range downloader.ConnectedPeers {
-				if connectedPeer.Requesting {
+				if connectedPeer.Downloading {
 					numRequesting++
 				}
 			}
@@ -268,9 +286,9 @@ func (downloader *Downloader) StartDownloading() {
 
 		case _ = <-keepAliveTicker.C:
 
-			numSent := 0
+			numKeptAlive := 0
 			for _, connectedPeer := range downloader.ConnectedPeers {
-				if !connectedPeer.Requesting {
+				if !connectedPeer.Downloading {
 					go func() {
 						if err := connectedPeer.SendKeepAlive(); err != nil {
 							downloader.peerLocker.Lock()
@@ -279,10 +297,18 @@ func (downloader *Downloader) StartDownloading() {
 							downloader.peerLocker.Unlock()
 						}
 					}()
-					numSent++
+					numKeptAlive++
 				}
 			}
-			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Sending keep alive to %d connected peers", numSent))
+
+			numUnchoking := 0
+			for _, connectedPeer := range downloader.ConnectedPeers {
+				if !connectedPeer.Active && connectedPeer.PeerChoking {
+					go downloader.ScanForUnchoke(connectedPeer)
+					numUnchoking++
+				}
+			}
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Sent keep alive to %d connected peers and unchoking %d connected peers", numKeptAlive, numUnchoking))
 
 		case _ = <-reconnectTicker.C:
 			// This ticker is called every 5 seconds
@@ -315,12 +341,12 @@ func (downloader *Downloader) StartDownloading() {
 
 			numRequesting := 0
 			for _, connectedPeer := range downloader.ConnectedPeers {
-				if connectedPeer.Requesting {
+				if connectedPeer.Downloading {
 					numRequesting++
 				}
 			}
 			for _, connectedPeer := range downloader.ConnectedPeers {
-				if numRequesting < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Requesting {
+				if numRequesting < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Downloading {
 					numRequesting++
 					go downloader.DownloadFromPeer(connectedPeer)
 				}
@@ -365,7 +391,7 @@ func (downloader *Downloader) StartDownloading() {
 
 					numRequesting := 0
 					for _, connectedPeer := range downloader.ConnectedPeers {
-						if connectedPeer.Requesting {
+						if connectedPeer.Downloading {
 							numRequesting++
 						}
 					}
@@ -384,12 +410,12 @@ func (downloader *Downloader) StartDownloading() {
 		}
 	}
 
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	downloader.Status = COMPLETED
 	ticker.Stop()
 	reconnectTicker.Stop()
 	keepAliveTicker.Stop()
 	fmt.Printf("Download completeted in %.2f seconds, with average speed %.2f KB/s\n", time.Since(startedTime).Seconds(), float64(downloader.Downloaded)/time.Since(startedTime).Seconds()/1024.0)
-	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
 }
 

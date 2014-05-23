@@ -41,7 +41,8 @@ type Peer struct {
 	PeerChoking      bool
 	PeerInterested   bool
 
-	Requesting bool
+	Downloading bool
+	Active      bool
 
 	ConnectTime time.Duration
 }
@@ -497,7 +498,8 @@ func New(torrentInfo *torrent_info.TorrentInfo, peerId string, ip string, port i
 		ClientInterested: false,
 		PeerChoking:      true,
 		PeerInterested:   false,
-		Requesting:       false,
+		Downloading:      false,
+		Active:           false,
 		ConnectTime:      time.Second * 10000,
 	}
 }
