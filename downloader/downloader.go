@@ -27,8 +27,8 @@ const (
 )
 
 const (
-	MAX_ACTIVE_REQUESTS    = 30
-	MAX_ACTIVE_CONNECTIONS = 100
+	MAX_ACTIVE_REQUESTS    = 70
+	MAX_ACTIVE_CONNECTIONS = 150
 	MAX_NEW_CONNECTIONS    = 20
 	MIN_ACTIVE_CONNECTIONS = 10
 )
@@ -57,7 +57,6 @@ type Downloader struct {
 
 	writerChan     chan file_writer.PieceData
 	connectionChan chan peer.ConnectionCommunication
-	requestChan    chan peer.RequestCommunication
 
 	peerLocker sync.Mutex
 }
@@ -94,7 +93,7 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 		if err != nil {
 			break
 		}
-		seeder.ReadMessages(1, 5 * time.Second)
+		seeder.ReadMessages(1, 5*time.Second)
 	}
 
 	if seeder.PeerChoking {
@@ -266,24 +265,24 @@ func (downloader *Downloader) StartDownloading() {
 
 	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
-		
-		case _ = <- keepAliveTicker.C:
-			
+
+		case _ = <-keepAliveTicker.C:
+
 			numSent := 0
-			for _ , connectedPeer := range downloader.ConnectedPeers {
+			for _, connectedPeer := range downloader.ConnectedPeers {
 				if !connectedPeer.Requesting {
-					go func(){
-						if err := connectedPeer.SendKeepAlive() ; err != nil {
+					go func() {
+						if err := connectedPeer.SendKeepAlive(); err != nil {
 							downloader.peerLocker.Lock()
 							downloader.DisconnectedPeers[connectedPeer.IP] = connectedPeer
 							delete(downloader.ConnectedPeers, connectedPeer.IP)
 							downloader.peerLocker.Unlock()
 						}
 					}()
-					numSent ++
+					numSent++
 				}
 			}
-			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]") , fmt.Sprintf("Sending keep alive to %d connected peers" , numSent))
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Sending keep alive to %d connected peers", numSent))
 
 		case _ = <-reconnectTicker.C:
 			// This ticker is called every 5 seconds
@@ -311,7 +310,7 @@ func (downloader *Downloader) StartDownloading() {
 						}
 					}
 				}
-				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Trying %d new connections" , newConnections))
+				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Trying %d new connections", newConnections))
 			}
 
 			numRequesting := 0
@@ -422,7 +421,6 @@ func New(torrent_path string) *Downloader {
 		AlivePeers:        make(map[string]*peer.Peer),
 
 		writerChan:     make(chan file_writer.PieceData),
-		requestChan:    make(chan peer.RequestCommunication),
 		connectionChan: make(chan peer.ConnectionCommunication),
 	}
 	downloader.LocalServer = local_server.New(peerId)

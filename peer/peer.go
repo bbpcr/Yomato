@@ -16,8 +16,6 @@ type PeerStatus int
 
 const (
 	DISCONNECTED PeerStatus = iota
-	PENDING_HANDSHAKE
-	HANDSHAKED
 	CONNECTED
 )
 
@@ -25,14 +23,6 @@ type ConnectionCommunication struct {
 	Peer          *Peer
 	StatusMessage string
 	Duration      time.Duration
-}
-
-type RequestCommunication struct {
-	Peer     *Peer
-	Pieces   []file_writer.PieceData
-	NumGood  int
-	NumEmpty int
-	Duration time.Duration
 }
 
 type Peer struct {
@@ -82,10 +72,6 @@ func (peer *Peer) GetInfo() string {
 		infoString += fmt.Sprintln("Status : DISCONNECTED")
 	case CONNECTED:
 		infoString += fmt.Sprintln("Status : CONNECTED")
-	case PENDING_HANDSHAKE:
-		infoString += fmt.Sprintln("Status : HANDSHAKING")
-	case HANDSHAKE:
-		infoString += fmt.Sprintln("Status : HANDSHAKED")
 	default:
 		infoString += fmt.Sprintln("Status : NONE")
 	}
@@ -131,6 +117,9 @@ func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
 // tryReadMessage returns (type of messasge, message, error) received by a peer
 func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int, []byte, error) {
 
+	if peer.Status != CONNECTED {
+		return -1, nil, errors.New("Peer not connected")
+	}
 	// First we read the first 5 bytes;
 	if timeout == 0 {
 		peer.Connection.SetReadDeadline(time.Time{})
@@ -159,7 +148,7 @@ func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int,
 }
 
 func (peer *Peer) sendKeepAlive() error {
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 0}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -181,7 +170,7 @@ func (peer *Peer) sendKeepAlive() error {
 // The message is exactly : [0, 0, 0, 1, 0] (first four bytes length = 1 , last byte the id of the message = 0).
 // Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendChoke() error {
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, CHOKE}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -205,7 +194,7 @@ func (peer *Peer) sendChoke() error {
 // Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendUnchoke() error {
 
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, UNCHOKE}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -229,7 +218,7 @@ func (peer *Peer) sendUnchoke() error {
 // Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendInterested() error {
 
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, INTERESTED}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -253,7 +242,7 @@ func (peer *Peer) sendInterested() error {
 func (peer *Peer) readMessages(maxMessages int, messageTimeoutDuration time.Duration) []file_writer.PieceData {
 
 	pieces := make([]file_writer.PieceData, 0)
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		for messageIndex := 0; messageIndex < maxMessages; messageIndex++ {
 
@@ -303,7 +292,7 @@ func (peer *Peer) ReadMessages(maxMessages int, timeoutDuration time.Duration) [
 // Peers wont respond to block requests if they are choked and uninterested.
 func (peer *Peer) sendUninterested() error {
 
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, NOT_INTERESTED}
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
@@ -342,7 +331,7 @@ func (peer *Peer) WriteRequest(params []int) error {
 		requestBytes = append(requestBytes, convertIntsToByteArray(params[request], params[request+1], params[request+2])...)
 		// We create one big byte array containing all the requests
 	}
-	if (peer.Status == HANDSHAKED || peer.Status == CONNECTED) && peer.Connection != nil {
+	if peer.Status == CONNECTED {
 		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		_, err := peer.Connection.Write(requestBytes)
 		return err
@@ -368,16 +357,11 @@ func (peer *Peer) sendHandshake() error {
 	if peer.Status == DISCONNECTED {
 		//If the peer is disconnected,
 		//it connects to the ip and port that we have.
-		peer.Status = PENDING_HANDSHAKE
 		err := peer.connect()
-		if err == nil {
-			return peer.sendHandshake()
-		} else {
+		if err != nil {
 			peer.Disconnect()
 			return err
 		}
-
-	} else if peer.Status == PENDING_HANDSHAKE {
 
 		// At this point , it is connected to the peer.
 		// It will send a byte array like this :
@@ -425,9 +409,8 @@ func (peer *Peer) sendHandshake() error {
 		}
 
 		remotePeerId := string(resp[48:])
-
-		peer.Status = HANDSHAKED
 		peer.RemotePeerId = remotePeerId
+		peer.Status = CONNECTED
 		return nil
 	}
 	return errors.New("Invalid status")
@@ -469,7 +452,7 @@ func (peer *Peer) Disconnect() {
 // sending unchoke and interested to the peer.
 func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 
-	if !(peer.Status == DISCONNECTED) {
+	if peer.Status == CONNECTED {
 		return
 	}
 	startTime := time.Now()
