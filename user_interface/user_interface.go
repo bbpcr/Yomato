@@ -207,11 +207,42 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 	hbox.PackEnd(cancel_button, false, false, 0)
 	hbox.PackEnd(ok_button, false, false, 0)
 
-	vbox.PackEnd(hbox, false, false, 0)
-
 	LoadList := NewLoadTorrentList(torrent_path)
-
 	fetched_torrent := LoadList.fetched_torrent
+
+	//now adding where to save the file
+
+	path_label := gtk.NewButtonWithLabel(fetched_torrent.GetDownloadPath())
+	path_label.SetResizeMode(gtk.RESIZE_IMMEDIATE)
+	path_label.CheckResize()
+
+	path_label.Clicked(func() {
+		path_label.SetLabel(fetched_torrent.GetDownloadPath())
+		path_label.CheckResize()
+	})
+
+	button_save := gtk.NewButtonWithLabel("Save to...")
+	button_save.Clicked(func() {
+		file_saver := gtk.NewFileChooserDialog("Choose where to save",
+			LoadingWindow.GetTopLevelAsWindow(),
+			gtk.FILE_CHOOSER_ACTION_SELECT_FOLDER,
+			gtk.STOCK_OK,
+			gtk.RESPONSE_OK)
+
+		file_saver.Run()
+
+		file_saver.Response(func() {
+			where_to_download := file_saver.GetFilename()
+			fetched_torrent.SetDownloadPath(where_to_download)
+			fmt.Println(where_to_download)
+			path_label.Emit("clicked")
+			file_saver.Destroy()
+		})
+	})
+
+	hbox.PackStart(button_save, false, false, 0)
+	vbox.PackEnd(hbox, false, false, 0)
+	vbox.PackEnd(path_label, false, false, 0)
 
 	var iter gtk.TreeIter
 	LoadList.store.Append(&iter, nil)
@@ -249,7 +280,9 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 				iter_prev := tree[prev_path]
 				var cur_iter gtk.TreeIter
 
-				LoadList.store.Append(&cur_iter, iter_prev)
+				LoadList.store.Append(&cur_iter,
+					iter_prev,
+				)
 				LoadList.store.Set(&cur_iter,
 					file,
 					get_size_in_string(file_info.Length),
@@ -259,7 +292,7 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 				size_tree[&cur_iter] = file_info.Length
 
 			} else {
-				//node builded, just update the size
+				//node built, just update the size
 				size_tree[tree[current_path]] += file_info.Length
 			}
 			prev_path = prev_path + "/" + file
@@ -383,13 +416,15 @@ func (ui *UserInterface) update() {
 	}
 	var iter gtk.TreeIter
 	ui.TorrentList.store.GetIterFirst(&iter)
+	//TO DO: improvement if we select only the non finished torrents
 
 	number_of_active := len(ui.TorrentList.paths)
 	for i := 0; i < number_of_active; i++ {
 		//there's got to be a way to update smarther than this..
 		//shit happens when the loop doesn't end and continues after one torrent is added
+		//not anymore
 
-		//update the speed
+		//update the speed only if the file started
 		if ui.TorrentList.started_paths[i] == false {
 			continue
 		}

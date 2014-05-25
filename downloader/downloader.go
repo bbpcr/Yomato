@@ -40,19 +40,26 @@ const (
 )
 
 type Downloader struct {
-	Trackers      []tracker.Tracker
-	TorrentInfo   torrent_info.TorrentInfo
-	LocalServer   *local_server.LocalServer
-	PeerId        string
-	Bitfield      *bitfield.Bitfield
-	Status        int
-	Downloaded    int64
-	Speed         float64
-	PiecesManager *piece_manager.PieceManager
-	PeersManager  *peer_manager.PeerManager
-	fileWriter    *file_writer.Writer
-
+	Trackers       []tracker.Tracker
+	TorrentInfo    torrent_info.TorrentInfo
+	LocalServer    *local_server.LocalServer
+	PeerId         string
+	Bitfield       *bitfield.Bitfield
+	Status         int
+	Downloaded     int64
+	Path           string
+	Speed          float64
+	PiecesManager  *piece_manager.PieceManager
+	PeersManager   *peer_manager.PeerManager
+	fileWriter     *file_writer.Writer
 	connectionChan chan peer.ConnectionCommunication
+}
+
+func (downloader *Downloader) SetDownloadPath(_path string) {
+	downloader.Path = _path
+}
+func (downloader *Downloader) GetDownloadPath() string {
+	return downloader.Path
 }
 
 func (downloader *Downloader) requestPeers(event int) {
@@ -245,6 +252,7 @@ func (downloader *Downloader) StartDownloading() {
 	if downloader.Status == DOWNLOADING {
 		return
 	}
+	downloader.Status = DOWNLOADING
 
 	cwd, err := os.Getwd()
 	if err != nil {
