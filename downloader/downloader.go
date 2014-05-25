@@ -113,7 +113,7 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 			}
 		}
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			go downloader.DownloadFromPeer(seeder)
+			downloader.DownloadFromPeer(seeder)
 		}
 	}
 }
@@ -179,7 +179,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
-		go downloader.ScanForUnchoke(seeder)
+		downloader.ScanForUnchoke(seeder)
 	} else {
 		seeder.Disconnect()
 		downloader.peerLocker.Lock()
@@ -216,11 +216,11 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	if bestUnchoked != nil {
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			go downloader.DownloadFromPeer(bestUnchoked)
+			downloader.DownloadFromPeer(bestUnchoked)
 		}
 	} else if bestChoked != nil {
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			go downloader.DownloadFromPeer(bestChoked)
+			downloader.DownloadFromPeer(bestChoked)
 		}
 	}
 	seeder.Requesting = false
