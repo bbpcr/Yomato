@@ -212,14 +212,7 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 
 	//now adding where to save the file
 
-	path_label := gtk.NewButtonWithLabel(fetched_torrent.GetDownloadPath())
-	path_label.SetResizeMode(gtk.RESIZE_IMMEDIATE)
-	path_label.CheckResize()
-
-	path_label.Clicked(func() {
-		path_label.SetLabel(fetched_torrent.GetDownloadPath())
-		path_label.CheckResize()
-	})
+	path_label := gtk.NewLabel(fetched_torrent.GetDownloadPath())
 
 	button_save := gtk.NewButtonWithLabel("Save to...")
 	button_save.Clicked(func() {
@@ -234,8 +227,7 @@ func (ui *UserInterface) StartLoadingWindow(torrent_path string) {
 		file_saver.Response(func() {
 			where_to_download := file_saver.GetFilename()
 			fetched_torrent.SetDownloadPath(where_to_download)
-			fmt.Println(where_to_download)
-			path_label.Emit("clicked")
+			path_label.SetText(where_to_download)
 			file_saver.Destroy()
 		})
 	})
