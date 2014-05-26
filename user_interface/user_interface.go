@@ -33,11 +33,11 @@ type UserInterface struct {
 	YDimension   int
 }
 type GTKTorrentList struct {
-	store         *gtk.ListStore
-	treeview      *gtk.TreeView
-	paths         []string
-	downloaders   []*downloader.Downloader
-	started_paths []bool
+	store        *gtk.ListStore
+	treeview     *gtk.TreeView
+	paths        []string
+	downloaders  []*downloader.Downloader
+	active_count int
 }
 
 //this is used to show torrents after pressing the load button
@@ -114,9 +114,10 @@ func NewUI(X, Y int) *UserInterface {
 }
 func NewGTKTorrentList() *GTKTorrentList {
 	Tlist := &GTKTorrentList{
-		store:    gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_INT, glib.G_TYPE_STRING),
-		treeview: gtk.NewTreeView(),
-		paths:    []string{},
+		store:        gtk.NewListStore(glib.G_TYPE_STRING, glib.G_TYPE_INT, glib.G_TYPE_STRING),
+		treeview:     gtk.NewTreeView(),
+		paths:        []string{},
+		active_count: 0,
 	}
 	Tlist.treeview.SetModel(Tlist.store)
 	Tlist.treeview.AppendColumn(
@@ -139,14 +140,12 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 	//Not adding duplicates
 
 	now_download := downloader.New(TorrentPath)
-
 	for i := 0; i < len(Tlist.downloaders); i++ {
 		if Tlist.downloaders[i].TorrentInfo.FileInformations.RootPath == now_download.TorrentInfo.FileInformations.RootPath {
 			return
 		}
 	}
 	Tlist.paths = append(Tlist.paths, TorrentPath)
-	Tlist.started_paths = append(Tlist.started_paths, false)
 	Tlist.downloaders = append(Tlist.downloaders, now_download)
 	torrent_name := now_download.TorrentInfo.FileInformations.RootPath
 
@@ -159,6 +158,25 @@ func (Tlist *GTKTorrentList) AddTorrentDescription(TorrentPath string) {
 		Tlist.store.GetValue(&iter, 0, &attr_val)
 		fmt.Println(attr_val.Value)
 	*/
+
+}
+func (Tlist *GTKTorrentList) GetActiveCount() int {
+	count := 0
+
+	for i := 0; i < len(Tlist.downloaders); i++ {
+		if Tlist.downloaders[i].Status == downloader.DOWNLOADING {
+			count += 1
+		}
+	}
+	return count
+}
+
+func (Tlist *GTKTorrentList) DeleteTorrent(torrent_index int, iter gtk.TreeIter) {
+	Tlist.store.Remove(&iter)
+	fmt.Println("Deleted " + Tlist.paths[torrent_index])
+	Tlist.paths = append(Tlist.paths[:torrent_index], Tlist.paths[torrent_index+1:]...)
+	// Now we should implement some stop routine for downloader
+	Tlist.downloaders = append(Tlist.downloaders[:torrent_index], Tlist.downloaders[torrent_index+1:]...)
 
 }
 func get_size_in_string(size_checked int64) string {
@@ -353,6 +371,7 @@ func (ui *UserInterface) AddFirstFrame() {
 	start_button.Connect("clicked", func() {
 
 		//make sure we didn't click start before having some files loaded
+
 		tree_selection := ui.TorrentList.treeview.GetSelection()
 		if tree_selection.CountSelectedRows() == 0 {
 			return
@@ -365,14 +384,19 @@ func (ui *UserInterface) AddFirstFrame() {
 		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
 		torrent_index, err := strconv.Atoi(torrent_name_str)
 
-		if ui.TorrentList.started_paths[torrent_index] == true {
+		if ui.TorrentList.downloaders[torrent_index].Status == downloader.DOWNLOADING {
+			return
+		}
+		downloading := ui.TorrentList.GetActiveCount()
+		if downloading > 0 {
+			fmt.Println("Right now we are not currently support multiple downloads")
 			return
 		}
 		if err != nil {
 			return
 		}
+		fmt.Println(downloading)
 		go func() {
-			ui.TorrentList.started_paths[torrent_index] = true
 			ui.TorrentList.downloaders[torrent_index].StartDownloading()
 		}()
 
@@ -394,6 +418,13 @@ func (ui *UserInterface) AddFirstFrame() {
 
 		var iter gtk.TreeIter
 		tree_selection.GetSelected(&iter)
+		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
+		torrent_index, err := strconv.Atoi(torrent_name_str)
+
+		if err != nil {
+			return
+		}
+		ui.TorrentList.DeleteTorrent(torrent_index, iter)
 
 	})
 	hbox.PackStart(stop_button, false, false, 0)
@@ -417,13 +448,19 @@ func (ui *UserInterface) update() {
 		//not anymore
 
 		//update the speed only if the file started
-		if ui.TorrentList.started_paths[i] == false {
+
+		//fmt.Println(ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING)
+
+		if ui.TorrentList.downloaders[i].Status != downloader.DOWNLOADING {
 			continue
 		}
-		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", ui.TorrentList.downloaders[i].Speed)+"KB/s")
 
-		//update the progress bar
 		var current_torrent = ui.TorrentList.downloaders[i]
+		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", current_torrent.Speed)+"KB/s")
+		//update the progress bar
+		if current_torrent.Status == downloader.COMPLETED {
+			continue
+		}
 		var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
 
 		ui.TorrentList.store.SetValue(&iter, 1, attr_value)
