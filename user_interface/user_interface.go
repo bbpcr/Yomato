@@ -172,6 +172,10 @@ func (Tlist *GTKTorrentList) GetActiveCount() int {
 }
 
 func (Tlist *GTKTorrentList) DeleteTorrent(torrent_index int, iter gtk.TreeIter) {
+	if Tlist.downloaders[torrent_index].Status == downloader.DOWNLOADING {
+		fmt.Println("Cannot remove torrent if it's currently downloading")
+		return
+	}
 	Tlist.store.Remove(&iter)
 	fmt.Println("Deleted " + Tlist.paths[torrent_index])
 	Tlist.paths = append(Tlist.paths[:torrent_index], Tlist.paths[torrent_index+1:]...)
@@ -411,11 +415,11 @@ func (ui *UserInterface) AddFirstFrame() {
 	stop_button.Add(DefaultImageBox(gtk.STOCK_STOP))
 
 	stop_button.Clicked(func() {
-		if len(ui.TorrentList.paths) == 0 {
+
+		tree_selection := ui.TorrentList.treeview.GetSelection()
+		if tree_selection.CountSelectedRows() == 0 {
 			return
 		}
-		tree_selection := ui.TorrentList.treeview.GetSelection()
-
 		var iter gtk.TreeIter
 		tree_selection.GetSelected(&iter)
 		torrent_name_str := ui.TorrentList.store.GetStringFromIter(&iter)
@@ -433,7 +437,7 @@ func (ui *UserInterface) AddFirstFrame() {
 	ui.VerticalBox.PackStart(ui.LoadFrame, false, true, 0)
 
 }
-func (ui *UserInterface) update() {
+func (ui *UserInterface) Update() {
 	if len(ui.TorrentList.paths) == 0 {
 		return
 	}
@@ -451,19 +455,16 @@ func (ui *UserInterface) update() {
 
 		//fmt.Println(ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING)
 
-		if ui.TorrentList.downloaders[i].Status != downloader.DOWNLOADING {
-			continue
-		}
+		if ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING {
 
-		var current_torrent = ui.TorrentList.downloaders[i]
-		ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", current_torrent.Speed)+"KB/s")
-		//update the progress bar
-		if current_torrent.Status == downloader.COMPLETED {
-			continue
-		}
-		var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
+			var current_torrent = ui.TorrentList.downloaders[i]
+			ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", current_torrent.Speed)+"KB/s")
+			//update the progress bar
 
-		ui.TorrentList.store.SetValue(&iter, 1, attr_value)
+			var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
+
+			ui.TorrentList.store.SetValue(&iter, 1, attr_value)
+		}
 		if i != number_of_active-1 {
 			ui.TorrentList.store.IterNext(&iter)
 		}
@@ -490,8 +491,8 @@ func Wrapper() *gtk.Window {
 		var seconds = 0
 		for _ = range ticker.C {
 			seconds++
-			if seconds == 2 {
-				ui.update()
+			if seconds == 3 {
+				ui.Update()
 				seconds = 0
 			}
 

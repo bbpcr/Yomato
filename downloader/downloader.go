@@ -442,7 +442,6 @@ func New(torrent_path string) *Downloader {
 		connectionChan: make(chan peer.ConnectionCommunication),
 		Status:         NOT_COMPLETED,
 	}
-
 	downloader.LocalServer = local_server.New(peerId)
 	downloader.Trackers = make([]tracker.Tracker, 1)
 

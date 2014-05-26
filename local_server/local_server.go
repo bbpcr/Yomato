@@ -22,7 +22,10 @@ func (req requestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // New returns a http local server for peerId
 func New(peerId string) *LocalServer {
-	tryPorts := []int{6881, 6882, 6883, 6884, 6885, 6886, 6887, 6888, 6889}
+	tryPorts := make([]int, 100)
+	for i := 6881; i < 6981; i++ {
+		tryPorts = append(tryPorts, i)
+	}
 	serverChan := make(chan *http.Server)
 	go (func(serverChan chan *http.Server) {
 		var server *http.Server
