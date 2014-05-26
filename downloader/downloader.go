@@ -44,13 +44,13 @@ type Downloader struct {
 	TorrentInfo   torrent_info.TorrentInfo
 	LocalServer   *local_server.LocalServer
 	PeerId        string
-	GoodPeers     []peer.Peer
 	Bitfield      *bitfield.Bitfield
 	Status        int
 	Downloaded    int64
 	Speed         float64
-	PiecesManager piece_manager.PieceManager
+	PiecesManager *piece_manager.PieceManager
 	PeersManager  *peer_manager.PeerManager
+	fileWriter    *file_writer.Writer
 
 	writerChan     chan file_writer.PieceData
 	connectionChan chan peer.ConnectionCommunication
@@ -140,7 +140,12 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 					downloader.writerChan <- pieceData
 				}
 				if downloader.PiecesManager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
-					downloader.Bitfield.Set(pieceData.PieceNumber, true)
+					if downloader.fileWriter.CheckSha1Sum(int64(pieceData.PieceNumber)) {
+						downloader.Bitfield.Set(pieceData.PieceNumber, true)
+					} else {
+						fmt.Println(pieceData.PieceNumber)
+						downloader.PiecesManager.AddPieceToDownload(pieceData.PieceNumber, &downloader.TorrentInfo)
+					}
 				}
 				downloader.PiecesManager.SetPieceDownloading(pieceData, false)
 			}
@@ -223,8 +228,9 @@ func (downloader *Downloader) StartDownloading() {
 	if err != nil {
 		panic(err)
 	}
-	writer := file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
-	go writer.StartWriting(downloader.writerChan)
+	downloader.fileWriter = file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
+	defer downloader.fileWriter.CloseFiles()
+	go downloader.fileWriter.StartWriting(downloader.writerChan)
 
 	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 

@@ -1,9 +1,12 @@
 package file_writer
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"github.com/bbpcr/Yomato/torrent_info"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type PieceData struct {
@@ -16,31 +19,20 @@ type PieceData struct {
 type Writer struct {
 	Root        string
 	TorrentInfo torrent_info.TorrentInfo
+	filesArray  []*os.File
+	fLocker     sync.Mutex
 }
 
-func New(root string, torrent torrent_info.TorrentInfo) Writer {
+func New(root string, torrent torrent_info.TorrentInfo) *Writer {
 	err := os.MkdirAll(root, 0777)
 	if err != nil {
 		panic(err)
 	}
 
-	return Writer{
+	writer := &Writer{
 		Root:        root,
 		TorrentInfo: torrent,
 	}
-}
-
-func (writer Writer) WritePiece(file *os.File, offset int64, piece []byte) {
-	file.Seek(offset, 0)
-	_, err := file.Write(piece)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (writer Writer) StartWriting(comm chan PieceData) {
-
-	var filesArray []*os.File
 	var folderPath string = ""
 
 	if writer.TorrentInfo.FileInformations.MultipleFiles {
@@ -57,18 +49,62 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 		if err != nil {
 			panic(err)
 		}
-		file, err := os.OpenFile(fullFilepath, os.O_WRONLY|os.O_CREATE, 0666)
+		file, err := os.OpenFile(fullFilepath, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
 			panic(err)
 		}
-		filesArray = append(filesArray, file)
+		writer.filesArray = append(writer.filesArray, file)
+	}
+	return writer
+}
+
+func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
+	pieceLength := writer.TorrentInfo.FileInformations.PieceLength
+	buffer := make([]byte, pieceLength)
+
+	offset := pieceIndex * pieceLength
+	// search the right file and offset
+	var currentFileIndex int = 0
+	for index, _ := range writer.filesArray {
+		if writer.TorrentInfo.FileInformations.Files[index].Length > offset {
+			currentFileIndex = index
+			break
+		} else {
+			offset -= writer.TorrentInfo.FileInformations.Files[index].Length
+		}
+	}
+	bytesToRead := pieceLength
+	bufferPos := int64(0)
+
+	for bytesToRead > 0 {
+		writer.fLocker.Lock()
+		n, err := writer.filesArray[currentFileIndex].ReadAt(buffer[bufferPos:], offset)
+		writer.fLocker.Unlock()
+		readed := int64(n)
+		if err == nil {
+			bufferPos += readed
+			bytesToRead -= readed
+			offset += readed
+		}
+		if offset >= writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length {
+			currentFileIndex++
+			offset = 0
+		}
 	}
 
-	defer (func() {
-		for _, file := range filesArray {
-			file.Close()
-		}
-	})()
+	computedHash := sha1.New()
+	computedHash.Write(buffer)
+	hash := writer.TorrentInfo.FileInformations.Pieces[pieceIndex*20 : (pieceIndex+1)*20]
+	return bytes.Equal(hash, computedHash.Sum(nil))
+}
+
+func (writer *Writer) CloseFiles() {
+	for _, file := range writer.filesArray {
+		file.Close()
+	}
+}
+
+func (writer *Writer) StartWriting(comm chan PieceData) {
 
 	for {
 		select {
@@ -81,7 +117,7 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 			// search the right file and offset
 			var currentFileIndex int = 0
 
-			for index, _ := range filesArray {
+			for index, _ := range writer.filesArray {
 				if writer.TorrentInfo.FileInformations.Files[index].Length > offset {
 					currentFileIndex = index
 					break
@@ -97,13 +133,17 @@ func (writer Writer) StartWriting(comm chan PieceData) {
 				bucketSize := writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length - offset
 				if bytesToWrite > bucketSize {
 
-					writer.WritePiece(filesArray[currentFileIndex], offset, data.Piece[:bucketSize])
+					writer.fLocker.Lock()
+					writer.filesArray[currentFileIndex].WriteAt(data.Piece[:bucketSize], offset)
+					writer.fLocker.Unlock()
 					bytesToWrite -= bucketSize
 					data.Piece = data.Piece[bucketSize:]
 					offset = 0
 
 				} else {
-					writer.WritePiece(filesArray[currentFileIndex], offset, data.Piece)
+					writer.fLocker.Lock()
+					writer.filesArray[currentFileIndex].WriteAt(data.Piece, offset)
+					writer.fLocker.Unlock()
 					bytesToWrite = 0
 				}
 			}
