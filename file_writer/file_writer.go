@@ -65,7 +65,6 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 	if pieceIndex == writer.TorrentInfo.FileInformations.PieceCount-1 {
 		pieceLength = writer.TorrentInfo.FileInformations.TotalLength % writer.TorrentInfo.FileInformations.PieceLength
 	}
-	buffer := make([]byte, pieceLength)
 
 	offset := pieceIndex * writer.TorrentInfo.FileInformations.PieceLength
 	// search the right file and offset
@@ -78,35 +77,35 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 			offset -= writer.TorrentInfo.FileInformations.Files[index].Length
 		}
 	}
-	bytesToRead := int64(len(buffer))
-	bufferPos := int64(0)
+	bytesToRead := pieceLength
+
+	buffer := make([]byte, 32*1024)
+	computedHash := sha1.New()
 
 	for bytesToRead > 0 {
 		writer.fLocker.Lock()
-		n, err := writer.filesArray[currentFileIndex].ReadAt(buffer[bufferPos:], offset)
+		writer.filesArray[currentFileIndex].Seek(offset, 0)
+		n, err := writer.filesArray[currentFileIndex].Read(buffer)
 		writer.fLocker.Unlock()
 		readed := int64(n)
 		if err == nil {
-			bufferPos += readed
 			bytesToRead -= readed
 			offset += readed
 		} else {
 			if readed == 0 {
 				break
 			} else {
-				bufferPos += readed
 				bytesToRead -= readed
 				offset += readed
 			}
 		}
+		computedHash.Write(buffer[:readed])
 		if offset >= writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length {
 			currentFileIndex++
 			offset = 0
 		}
 	}
 
-	computedHash := sha1.New()
-	computedHash.Write(buffer)
 	hash := writer.TorrentInfo.FileInformations.Pieces[pieceIndex*20 : (pieceIndex+1)*20]
 	return bytes.Equal(hash, computedHash.Sum(nil))
 }
