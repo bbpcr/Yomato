@@ -77,6 +77,10 @@ func (downloader *Downloader) requestPeers(bytesUploaded int64, bytesDownloaded 
 	fmt.Printf("%s %d trackers gave us new %d peers.\n", time.Now().Format("[2006.01.02 15:04:05]"), len(downloader.Trackers), numPeers)
 }
 
+func (downloader *Downloader) checkExistingFiles() {
+
+}
+
 func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 
 	if seeder.Active || seeder.Downloading {
@@ -140,11 +144,19 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 					downloader.writerChan <- pieceData
 				}
 				if downloader.PiecesManager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
-					if downloader.fileWriter.CheckSha1Sum(int64(pieceData.PieceNumber)) {
-						downloader.Bitfield.Set(pieceData.PieceNumber, true)
-					} else {
-						fmt.Println(pieceData.PieceNumber)
-						downloader.PiecesManager.AddPieceToDownload(pieceData.PieceNumber, &downloader.TorrentInfo)
+					if !downloader.Bitfield.At(pieceData.PieceNumber) {
+						if downloader.fileWriter.CheckSha1Sum(int64(pieceData.PieceNumber)) {
+							downloader.Bitfield.Set(pieceData.PieceNumber, true)
+						} else {
+							fmt.Println("Dropped piece ", pieceData.PieceNumber)
+							downloader.PiecesManager.AddPieceToDownload(pieceData.PieceNumber, &downloader.TorrentInfo)
+							pieceIndex := pieceData.PieceNumber
+							pieceLength := downloader.TorrentInfo.FileInformations.PieceLength
+							if pieceIndex == int(downloader.TorrentInfo.FileInformations.PieceCount)-1 {
+								pieceLength = downloader.TorrentInfo.FileInformations.TotalLength - downloader.TorrentInfo.FileInformations.PieceLength*(downloader.TorrentInfo.FileInformations.PieceCount-1)
+							}
+							downloader.Downloaded -= pieceLength
+						}
 					}
 				}
 				downloader.PiecesManager.SetPieceDownloading(pieceData, false)

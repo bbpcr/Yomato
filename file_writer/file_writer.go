@@ -59,10 +59,14 @@ func New(root string, torrent torrent_info.TorrentInfo) *Writer {
 }
 
 func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
+
 	pieceLength := writer.TorrentInfo.FileInformations.PieceLength
+	if pieceIndex == writer.TorrentInfo.FileInformations.PieceCount-1 {
+		pieceLength = writer.TorrentInfo.FileInformations.TotalLength % writer.TorrentInfo.FileInformations.PieceLength
+	}
 	buffer := make([]byte, pieceLength)
 
-	offset := pieceIndex * pieceLength
+	offset := pieceIndex * writer.TorrentInfo.FileInformations.PieceLength
 	// search the right file and offset
 	var currentFileIndex int = 0
 	for index, _ := range writer.filesArray {
@@ -73,7 +77,7 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 			offset -= writer.TorrentInfo.FileInformations.Files[index].Length
 		}
 	}
-	bytesToRead := pieceLength
+	bytesToRead := int64(len(buffer))
 	bufferPos := int64(0)
 
 	for bytesToRead > 0 {
@@ -85,6 +89,8 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 			bufferPos += readed
 			bytesToRead -= readed
 			offset += readed
+		} else {
+			break
 		}
 		if offset >= writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length {
 			currentFileIndex++
