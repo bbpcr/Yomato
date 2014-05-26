@@ -64,6 +64,9 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 	pieceLength := writer.TorrentInfo.FileInformations.PieceLength
 	if pieceIndex == writer.TorrentInfo.FileInformations.PieceCount-1 {
 		pieceLength = writer.TorrentInfo.FileInformations.TotalLength % writer.TorrentInfo.FileInformations.PieceLength
+		if pieceLength == 0 {
+			pieceLength = writer.TorrentInfo.FileInformations.PieceLength
+		}
 	}
 
 	offset := pieceIndex * writer.TorrentInfo.FileInformations.PieceLength
