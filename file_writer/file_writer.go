@@ -50,6 +50,7 @@ func New(root string, torrent torrent_info.TorrentInfo) *Writer {
 			panic(err)
 		}
 		file, err := os.OpenFile(fullFilepath, os.O_RDWR|os.O_CREATE, 0666)
+		file.Truncate(fileData.Length)
 		if err != nil {
 			panic(err)
 		}
@@ -90,7 +91,13 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 			bytesToRead -= readed
 			offset += readed
 		} else {
-			break
+			if readed == 0 {
+				break
+			} else {
+				bufferPos += readed
+				bytesToRead -= readed
+				offset += readed
+			}
 		}
 		if offset >= writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length {
 			currentFileIndex++
@@ -105,54 +112,47 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 }
 
 func (writer *Writer) CloseFiles() {
+	writer.fLocker.Lock()
+	defer writer.fLocker.Unlock()
 	for _, file := range writer.filesArray {
 		file.Close()
 	}
 }
 
-func (writer *Writer) StartWriting(comm chan PieceData) {
+func (writer *Writer) WritePiece(data PieceData) {
+	offset := int64(data.PieceNumber)*writer.TorrentInfo.FileInformations.PieceLength + int64(data.Offset)
 
-	for {
-		select {
-		case data, ok := <-comm:
-			if !ok {
-				return
-			}
-			offset := int64(data.PieceNumber)*writer.TorrentInfo.FileInformations.PieceLength + int64(data.Offset)
+	// search the right file and offset
+	var currentFileIndex int = 0
 
-			// search the right file and offset
-			var currentFileIndex int = 0
+	for index, _ := range writer.filesArray {
+		if writer.TorrentInfo.FileInformations.Files[index].Length > offset {
+			currentFileIndex = index
+			break
+		} else {
+			offset -= writer.TorrentInfo.FileInformations.Files[index].Length
+		}
+	}
 
-			for index, _ := range writer.filesArray {
-				if writer.TorrentInfo.FileInformations.Files[index].Length > offset {
-					currentFileIndex = index
-					break
-				} else {
-					offset -= writer.TorrentInfo.FileInformations.Files[index].Length
-				}
-			}
+	bytesToWrite := int64(len(data.Piece))
 
-			bytesToWrite := int64(len(data.Piece))
+	for ; bytesToWrite > 0; currentFileIndex++ {
 
-			for ; bytesToWrite > 0; currentFileIndex++ {
+		bucketSize := writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length - offset
+		if bytesToWrite > bucketSize {
 
-				bucketSize := writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length - offset
-				if bytesToWrite > bucketSize {
+			writer.fLocker.Lock()
+			writer.filesArray[currentFileIndex].WriteAt(data.Piece[:bucketSize], offset)
+			writer.fLocker.Unlock()
+			bytesToWrite -= bucketSize
+			data.Piece = data.Piece[bucketSize:]
+			offset = 0
 
-					writer.fLocker.Lock()
-					writer.filesArray[currentFileIndex].WriteAt(data.Piece[:bucketSize], offset)
-					writer.fLocker.Unlock()
-					bytesToWrite -= bucketSize
-					data.Piece = data.Piece[bucketSize:]
-					offset = 0
-
-				} else {
-					writer.fLocker.Lock()
-					writer.filesArray[currentFileIndex].WriteAt(data.Piece, offset)
-					writer.fLocker.Unlock()
-					bytesToWrite = 0
-				}
-			}
+		} else {
+			writer.fLocker.Lock()
+			writer.filesArray[currentFileIndex].WriteAt(data.Piece, offset)
+			writer.fLocker.Unlock()
+			bytesToWrite = 0
 		}
 	}
 }

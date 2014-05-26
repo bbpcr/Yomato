@@ -112,6 +112,38 @@ func (manager *PieceManager) AddPieceToDownload(pieceIndex int, torrentInfo *tor
 	}
 }
 
+func (manager *PieceManager) RemovePieceFromDownload(pieceIndex int, torrentInfo *torrent_info.TorrentInfo) {
+	manager.blocksLocker.Lock()
+	defer manager.blocksLocker.Unlock()
+	pieceLength := torrentInfo.FileInformations.PieceLength
+	if pieceIndex == int(torrentInfo.FileInformations.PieceCount)-1 {
+		pieceLength = torrentInfo.FileInformations.TotalLength - torrentInfo.FileInformations.PieceLength*(torrentInfo.FileInformations.PieceCount-1)
+	}
+	numBlocks := pieceLength / BLOCK_LENGTH
+	lastBlockSize := pieceLength % BLOCK_LENGTH
+	offset := 0
+	blockIndex := manager.pieceNumBlocks[pieceIndex]
+
+	for blockPosition := 0; blockPosition < int(numBlocks); blockPosition++ {
+		manager.blockBytes[blockIndex] = 0
+		manager.blockDownloading[blockIndex] = false
+		manager.blockPiece[blockIndex] = pieceIndex
+		manager.blockOffset[blockIndex] = offset
+		blockIndex++
+		offset += BLOCK_LENGTH
+	}
+
+	if lastBlockSize != 0 {
+		manager.blockBytes[blockIndex] = 0
+		manager.blockDownloading[blockIndex] = false
+		manager.blockPiece[blockIndex] = pieceIndex
+		manager.blockOffset[blockIndex] = offset
+		blockIndex++
+	}
+
+	manager.pieceBytes[pieceIndex] = int(pieceLength)
+}
+
 // Returns the ID of the next piece to download.
 // This can use multiple strategies, e.g.
 // Sequentially (NOT good, easy for development)
@@ -196,4 +228,12 @@ func (manager *PieceManager) IsPieceCompleted(pieceIndex int, torrentInfo *torre
 		return true
 	}
 	return false
+}
+
+func (manager *PieceManager) CalculateDownloaded() int64 {
+	var total int64 = 0
+	for _, count := range manager.pieceBytes {
+		total += int64(count)
+	}
+	return total
 }
