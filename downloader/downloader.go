@@ -396,7 +396,7 @@ func (downloader *Downloader) StartDownloading() {
 		}
 	}
 
-	realDownloaded := downloader.PiecesManager.CalculateDownloaded()
+	realDownloaded = downloader.PiecesManager.CalculateDownloaded()
 	downloader.requestPeers(realDownloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-realDownloaded, tracker.NONE)
 
 	downloader.Status = COMPLETED
