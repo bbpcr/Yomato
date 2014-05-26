@@ -392,10 +392,10 @@ func (ui *UserInterface) AddFirstFrame() {
 			return
 		}
 		downloading := ui.TorrentList.GetActiveCount()
-		if downloading > 0 {
-			fmt.Println("Right now we are not currently support multiple downloads")
-			return
-		}
+		// if downloading > 0 {
+		// 	fmt.Println("Right now we are not currently support multiple downloads")
+		// 	return
+		// }
 		if err != nil {
 			return
 		}
@@ -461,7 +461,7 @@ func (ui *UserInterface) Update() {
 			ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", current_torrent.Speed)+"KB/s")
 			//update the progress bar
 
-			var attr_value = int(current_torrent.Downloaded * 100 / current_torrent.TorrentInfo.FileInformations.TotalLength)
+			var attr_value = int(current_torrent.Bitfield.OneBits * 100 / current_torrent.Bitfield.Length)
 
 			ui.TorrentList.store.SetValue(&iter, 1, attr_value)
 		}
@@ -491,7 +491,7 @@ func Wrapper() *gtk.Window {
 		var seconds = 0
 		for _ = range ticker.C {
 			seconds++
-			if seconds == 3 {
+			if seconds == 1 {
 				ui.Update()
 				seconds = 0
 			}
