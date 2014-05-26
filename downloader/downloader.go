@@ -55,12 +55,15 @@ type Downloader struct {
 	connectionChan chan peer.ConnectionCommunication
 }
 
-func (downloader *Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
+func (downloader *Downloader) requestPeers(event int) {
 
 	// Request the peers , from the tracker
 	// The first paramater is how many bytes uploaded , the second downloaded , and the third remaining size.
 	// The fourth param is the event.
 	numPeers := 0
+	bytesDownloaded := downloader.PiecesManager.CalculateDownloaded()
+	bytesLeft := downloader.TorrentInfo.FileInformations.TotalLength - bytesDownloaded
+	bytesUploaded := int64(0)
 	for trackerIndex := 0; trackerIndex < len(downloader.Trackers); trackerIndex++ {
 
 		trackerResponse := downloader.Trackers[trackerIndex].RequestPeers(bytesUploaded, bytesDownloaded, bytesLeft, event)
@@ -151,7 +154,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		if len(pieces) > 0 {
 			for _, pieceData := range pieces {
 				err := downloader.PiecesManager.UpdatePiece(pieceData)
-				//fmt.Println(pieceData.PieceNumber, pieceData.Offset)
 				downloader.Downloaded += int64(len(pieceData.Piece))
 				if err == nil {
 					downloader.fileWriter.WritePiece(pieceData)
@@ -251,8 +253,7 @@ func (downloader *Downloader) StartDownloading() {
 	defer downloader.fileWriter.CloseFiles()
 	downloader.checkExistingFiles()
 
-	realDownloaded := downloader.PiecesManager.CalculateDownloaded()
-	downloader.requestPeers(realDownloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-realDownloaded, tracker.NONE)
+	downloader.requestPeers(tracker.DOWNLOAD_STARTED)
 
 	ticker := time.NewTicker(time.Second * 2)
 	defer ticker.Stop()
@@ -260,10 +261,8 @@ func (downloader *Downloader) StartDownloading() {
 	defer reconnectTicker.Stop()
 	keepAliveTicker := time.NewTicker(KEEP_ALIVE_DURATION)
 	defer keepAliveTicker.Stop()
-	defer func() {
-		realDownloaded := downloader.PiecesManager.CalculateDownloaded()
-		downloader.requestPeers(realDownloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-realDownloaded, tracker.NONE)
-	}()
+
+	defer downloader.requestPeers(tracker.DOWNLOAD_STOPPED)
 
 	startedTime := time.Now()
 	go func() {
@@ -277,8 +276,7 @@ func (downloader *Downloader) StartDownloading() {
 			numRequesting := downloader.PeersManager.CountDownloadingPeers()
 			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Peers : %d / %d [Total %d / %d] Downloaded Pieces : %d / %d (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", numRequesting, downloader.PeersManager.CountConnectedPeers(), downloader.PeersManager.CountAlivePeers(), downloader.PeersManager.CountAllPeers(), downloader.Bitfield.OneBits, downloader.Bitfield.Length, float64(downloader.Bitfield.OneBits)*100.0/float64(downloader.Bitfield.Length), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 200 {
-				realDownloaded := downloader.PiecesManager.CalculateDownloaded()
-				downloader.requestPeers(realDownloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-realDownloaded, tracker.NONE)
+				downloader.requestPeers(tracker.NONE)
 				seconds = 0
 			}
 		}
@@ -396,8 +394,7 @@ func (downloader *Downloader) StartDownloading() {
 		}
 	}
 
-	realDownloaded = downloader.PiecesManager.CalculateDownloaded()
-	downloader.requestPeers(realDownloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-realDownloaded, tracker.NONE)
+	downloader.requestPeers(tracker.DOWNLOAD_COMPLETED)
 
 	downloader.Status = COMPLETED
 	ticker.Stop()
