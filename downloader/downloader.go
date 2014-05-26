@@ -12,7 +12,6 @@ import (
 
 	"github.com/bbpcr/Yomato/bencode"
 	"github.com/bbpcr/Yomato/bitfield"
-	"github.com/bbpcr/Yomato/database"
 	"github.com/bbpcr/Yomato/file_writer"
 	"github.com/bbpcr/Yomato/local_server"
 	"github.com/bbpcr/Yomato/peer"
@@ -48,21 +47,19 @@ type Downloader struct {
 	GoodPeers   []peer.Peer
 	Bitfield    *bitfield.Bitfield
 	Status      int
+	Downloaded  int64
 	Speed       float64
-	Manager     *piece_manager.PieceManager
+	Manager     piece_manager.PieceManager
 
 	DisconnectedPeers map[string]*peer.Peer
 	ConnectedPeers    map[string]*peer.Peer
 	AlivePeers        map[string]*peer.Peer
 
 	writerChan     chan file_writer.PieceData
-	writeDoneChan  chan file_writer.PieceData
 	connectionChan chan peer.ConnectionCommunication
 	requestChan    chan peer.RequestCommunication
 
-	peerLocker  sync.Mutex
-	torrentPath string
-	model       *database.Model
+	peerLocker sync.Mutex
 }
 
 func (downloader Downloader) requestPeers(bytesUploaded int64, bytesDownloaded int64, bytesLeft int64, event int) {
@@ -97,7 +94,7 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 		if err != nil {
 			break
 		}
-		seeder.ReadMessages(1, 5*time.Second)
+		seeder.ReadMessages(1, 5 * time.Second)
 	}
 
 	if seeder.PeerChoking {
@@ -113,12 +110,13 @@ func (downloader *Downloader) ScanForUnchoke(seeder *peer.Peer) {
 			}
 		}
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			downloader.DownloadFromPeer(seeder)
+			go downloader.DownloadFromPeer(seeder)
 		}
 	}
 }
 
 func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
+
 	if seeder.Requesting {
 		return
 	}
@@ -126,7 +124,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	for seeder.Status == peer.CONNECTED {
 
-		blocks := downloader.Manager.GetNextBlocksToDownload(&seeder.BitfieldInfo, 10)
+		blocks := downloader.Manager.GetNextBlocksToDownload(seeder, 10)
 		if blocks == nil {
 			break
 		}
@@ -138,9 +136,6 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 		}
 		err := seeder.WriteRequest(smallParams)
 		if err != nil {
-			for _, block := range blocks {
-				downloader.Manager.SetBlockDownloading(block, false)
-			}
 			break
 		}
 
@@ -148,20 +143,15 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 		if len(pieces) > 0 {
 			for _, pieceData := range pieces {
-				blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
-				if blockIndex == -1 {
-					continue
-				}
-
-				blockLength := len(pieceData.Piece)
-				if downloader.Manager.BlockSizeCoresponds(blockIndex, blockLength) {
-					downloader.Manager.MarkBlockDownloaded(blockIndex)
+				err := downloader.Manager.UpdatePiece(pieceData)
+				if err == nil {
+					downloader.Downloaded += int64(len(pieceData.Piece))
 					downloader.writerChan <- pieceData
 				}
-
-				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber) {
+				if downloader.Manager.IsPieceCompleted(pieceData.PieceNumber, &downloader.TorrentInfo) {
 					downloader.Bitfield.Set(pieceData.PieceNumber, true)
 				}
+				downloader.Manager.SetPieceDownloading(pieceData, false)
 			}
 			for block := 0; block < len(blocks); block++ {
 				downloader.Manager.SetBlockDownloading(blocks[block], false)
@@ -179,7 +169,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	if seeder.PeerChoking {
 		seeder.SendUninterested()
-		downloader.ScanForUnchoke(seeder)
+		go downloader.ScanForUnchoke(seeder)
 	} else {
 		seeder.Disconnect()
 		downloader.peerLocker.Lock()
@@ -216,11 +206,11 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 
 	if bestUnchoked != nil {
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			downloader.DownloadFromPeer(bestUnchoked)
+			go downloader.DownloadFromPeer(bestUnchoked)
 		}
 	} else if bestChoked != nil {
 		if numRequesting < MAX_ACTIVE_REQUESTS {
-			downloader.DownloadFromPeer(bestChoked)
+			go downloader.DownloadFromPeer(bestChoked)
 		}
 	}
 	seeder.Requesting = false
@@ -229,29 +219,19 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 // StartDownloading downloads the motherfucker
 func (downloader *Downloader) StartDownloading() {
 
+	downloader.Downloaded = 0
 	if downloader.Status == DOWNLOADING {
 		return
 	}
-	if err := downloader.model.Connect(); err != nil {
-		panic(err)
-	}
 
-	defer downloader.model.Disconnect()
-
-	downloader.Manager = piece_manager.New(&downloader.TorrentInfo, downloader.model)
-	for i := 0; i < int(downloader.Bitfield.Length); i++ {
-		if downloader.Manager.IsPieceCompleted(i) {
-			downloader.Bitfield.Set(i, true)
-		}
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		panic(err)
 	}
 	writer := file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
-	go writer.StartWriting(downloader.writerChan, downloader.writeDoneChan)
+	go writer.StartWriting(downloader.writerChan)
 
-	downloader.requestPeers(downloader.Manager.BytesDownloaded(), 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Manager.BytesDownloaded(), tracker.DOWNLOAD_STARTED)
+	downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STARTED)
 
 	ticker := time.NewTicker(time.Second * 2)
 	defer ticker.Stop()
@@ -259,91 +239,51 @@ func (downloader *Downloader) StartDownloading() {
 	defer reconnectTicker.Stop()
 	keepAliveTicker := time.NewTicker(KEEP_ALIVE_DURATION)
 	defer keepAliveTicker.Stop()
-	defer downloader.requestPeers(downloader.Manager.BytesDownloaded(), 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Manager.BytesDownloaded(), tracker.DOWNLOAD_STOPPED)
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_STOPPED)
 
 	startedTime := time.Now()
 	go func() {
 		var seconds int = 0
-		var lastDownloaded int64 = downloader.Manager.BytesDownloaded()
-		downloader.model.BeginTransaction()
+		var lastDownloaded int64 = 0
 		for _ = range ticker.C {
 			seconds += 2
-			downloader.Speed = float64(downloader.Manager.BytesDownloaded()-lastDownloaded) / 1024.0
+			downloader.Speed = float64(downloader.Downloaded-lastDownloaded) / 1024.0
 			downloader.Speed /= 2
-			lastDownloaded = downloader.Manager.BytesDownloaded()
+			lastDownloaded = downloader.Downloaded
 			numRequesting := 0
 			for _, connectedPeer := range downloader.ConnectedPeers {
 				if connectedPeer.Requesting {
 					numRequesting++
 				}
 			}
-			downloader.model.AddTimeDownloaded(2)
-			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Peers : %d / %d [Total %d / %d] Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", numRequesting, len(downloader.ConnectedPeers), len(downloader.AlivePeers), len(downloader.ConnectedPeers)+len(downloader.DisconnectedPeers), downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Manager.BytesDownloaded(), downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Manager.BytesDownloaded())/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Peers : %d / %d [Total %d / %d] Downloaded Pieces : %d / %d Downloaded : %d KB / %d KB (%.2f%%) Speed : %.2f KB/s Elapsed : %.2f seconds ", numRequesting, len(downloader.ConnectedPeers), len(downloader.AlivePeers), len(downloader.ConnectedPeers)+len(downloader.DisconnectedPeers), downloader.Bitfield.OneBits, downloader.Bitfield.Length, downloader.Downloaded, downloader.TorrentInfo.FileInformations.TotalLength, 100.0*float64(downloader.Downloaded)/float64(downloader.TorrentInfo.FileInformations.TotalLength), downloader.Speed, time.Since(startedTime).Seconds()))
 			if seconds == 200 {
-				downloader.requestPeers(downloader.Manager.BytesDownloaded(), 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Manager.BytesDownloaded(), tracker.NONE)
+				downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.NONE)
 				seconds = 0
 			}
-
-			downloader.model.CommitTransaction()
-			downloader.model.BeginTransaction()
-		}
-
-		downloader.model.CommitTransaction()
-	}()
-
-	defer ticker.Stop()
-
-	go func() {
-		for pieceData := range downloader.writeDoneChan {
-			blockIndex := downloader.Manager.GetBlockIndex(pieceData.PieceNumber, pieceData.Offset)
-			if err := downloader.model.MarkBlockHave(blockIndex); err != nil {
-				panic(err)
-			}
 		}
 	}()
 
-	for {
-		if downloader.Manager.BytesDownloaded() >= downloader.TorrentInfo.FileInformations.TotalLength {
-			// check SHA sums for all pieces to confirm that the download is done. If there are any
-			// corrupted pieces, re-download them
-			fmt.Printf("Download almost done; checking SHA-1 sums.\n")
-			corruptedPieces := writer.CheckSha1Sums()
-			if len(corruptedPieces) == 0 {
-				fmt.Printf("File downloaded correctly\n")
-				break
-			} else {
-				for _, piece := range corruptedPieces {
-					pieceSize := downloader.TorrentInfo.FileInformations.PieceLength
-					if int64(piece) == downloader.TorrentInfo.FileInformations.PieceCount-1 {
-						// last piece, compute actual piece size
-						pieceSize = downloader.TorrentInfo.FileInformations.TotalLength - downloader.TorrentInfo.FileInformations.PieceLength*(downloader.TorrentInfo.FileInformations.PieceCount-1)
-					}
-					downloader.Bitfield.Set(int(piece), false)
-
-					downloader.Manager.UnmarkPieceDownloaded(int(piece), int(pieceSize))
-				}
-			}
-		}
-
+	for downloader.Downloaded < downloader.TorrentInfo.FileInformations.TotalLength {
 		select {
-
-		case _ = <-keepAliveTicker.C:
-
+		
+		case _ = <- keepAliveTicker.C:
+			
 			numSent := 0
-			for _, connectedPeer := range downloader.ConnectedPeers {
+			for _ , connectedPeer := range downloader.ConnectedPeers {
 				if !connectedPeer.Requesting {
-					go func() {
-						if err := connectedPeer.SendKeepAlive(); err != nil {
+					go func(){
+						if err := connectedPeer.SendKeepAlive() ; err != nil {
 							downloader.peerLocker.Lock()
 							downloader.DisconnectedPeers[connectedPeer.IP] = connectedPeer
 							delete(downloader.ConnectedPeers, connectedPeer.IP)
 							downloader.peerLocker.Unlock()
 						}
 					}()
-					numSent++
+					numSent ++
 				}
 			}
-			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Sending keep alive to %d connected peers", numSent))
+			fmt.Println(time.Now().Format("[2006.01.02 15:04:05]") , fmt.Sprintf("Sending keep alive to %d connected peers" , numSent))
 
 		case _ = <-reconnectTicker.C:
 			// This ticker is called every 5 seconds
@@ -351,6 +291,7 @@ func (downloader *Downloader) StartDownloading() {
 			// If that doesnt happen then we choose 3 disconnected peers , and we try to connect them.
 			connectedPeersCount := len(downloader.ConnectedPeers)
 			if connectedPeersCount < MIN_ACTIVE_CONNECTIONS {
+
 				for _, alivePeer := range downloader.AlivePeers {
 					if alivePeer.Status == peer.DISCONNECTED {
 						go alivePeer.EstablishFullConnection(downloader.connectionChan)
@@ -370,7 +311,7 @@ func (downloader *Downloader) StartDownloading() {
 						}
 					}
 				}
-				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Trying %d new connections", newConnections))
+				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), fmt.Sprintf("Trying %d new connections" , newConnections))
 			}
 
 			numRequesting := 0
@@ -378,7 +319,6 @@ func (downloader *Downloader) StartDownloading() {
 				if connectedPeer.Requesting {
 					numRequesting++
 				}
-
 			}
 			for _, connectedPeer := range downloader.ConnectedPeers {
 				if numRequesting < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Requesting {
@@ -449,15 +389,8 @@ func (downloader *Downloader) StartDownloading() {
 	ticker.Stop()
 	reconnectTicker.Stop()
 	keepAliveTicker.Stop()
-
-	totalTime, err := downloader.model.TimeUsed()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Download completed in %d seconds, with average speed %.2f KB/s\n", totalTime, float64(downloader.Manager.BytesDownloaded())/float64(totalTime)/1024.0)
-
-	defer downloader.requestPeers(downloader.Manager.BytesDownloaded(), 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Manager.BytesDownloaded(), tracker.DOWNLOAD_COMPLETED)
+	fmt.Printf("Download completeted in %.2f seconds, with average speed %.2f KB/s\n", time.Since(startedTime).Seconds(), float64(downloader.Downloaded)/time.Since(startedTime).Seconds()/1024.0)
+	defer downloader.requestPeers(downloader.Downloaded, 0, downloader.TorrentInfo.FileInformations.TotalLength-downloader.Downloaded, tracker.DOWNLOAD_COMPLETED)
 	return
 }
 
@@ -488,12 +421,9 @@ func New(torrent_path string) *Downloader {
 		ConnectedPeers:    make(map[string]*peer.Peer),
 		AlivePeers:        make(map[string]*peer.Peer),
 
-		writerChan:     make(chan file_writer.PieceData, 5),
-		writeDoneChan:  make(chan file_writer.PieceData, 5),
+		writerChan:     make(chan file_writer.PieceData),
 		requestChan:    make(chan peer.RequestCommunication),
 		connectionChan: make(chan peer.ConnectionCommunication),
-		torrentPath:    torrent_path,
-		model:          database.NewModel(string(data)),
 	}
 	downloader.LocalServer = local_server.New(peerId)
 	downloader.Trackers = make([]tracker.Tracker, 1)
@@ -508,6 +438,7 @@ func New(torrent_path string) *Downloader {
 		}
 	}
 	downloader.Status = NOT_COMPLETED
+	downloader.Manager = piece_manager.New(torrentInfo)
 	return downloader
 }
 
