@@ -455,7 +455,7 @@ func (ui *UserInterface) Update() {
 
 		//fmt.Println(ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING)
 
-		if ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING {
+		if ui.TorrentList.downloaders[i].Status == downloader.DOWNLOADING || ui.TorrentList.downloaders[i].Status == downloader.COMPLETED {
 
 			var current_torrent = ui.TorrentList.downloaders[i]
 			ui.TorrentList.store.SetValue(&iter, 2, fmt.Sprintf("%.2f", current_torrent.Speed)+"KB/s")
@@ -491,7 +491,7 @@ func Wrapper() *gtk.Window {
 		var seconds = 0
 		for _ = range ticker.C {
 			seconds++
-			if seconds == 1 {
+			if seconds == 3 {
 				ui.Update()
 				seconds = 0
 			}

@@ -3,6 +3,7 @@ package file_writer
 import (
 	"bytes"
 	"crypto/sha1"
+	"fmt"
 	"github.com/bbpcr/Yomato/torrent_info"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type Writer struct {
 }
 
 func New(root string, torrent torrent_info.TorrentInfo) *Writer {
+	fmt.Println(root)
 	err := os.MkdirAll(root, 0777)
 	if err != nil {
 		panic(err)

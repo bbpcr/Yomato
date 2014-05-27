@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -245,6 +244,13 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	seeder.Downloading = false
 }
 
+func (downloader *Downloader) DisconnectedAllPeers() {
+	for _, connectedPeer := range downloader.PeersManager.GetConnectedPeers() {
+		connectedPeer.Disconnect()
+		downloader.PeersManager.SetPeerAsDisconnected(connectedPeer)
+	}
+}
+
 // StartDownloading downloads the motherfucker
 func (downloader *Downloader) StartDownloading() {
 
@@ -254,11 +260,7 @@ func (downloader *Downloader) StartDownloading() {
 	}
 	downloader.Status = DOWNLOADING
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	downloader.fileWriter = file_writer.New(filepath.Join(cwd, "TorrentDownloads"), downloader.TorrentInfo)
+	downloader.fileWriter = file_writer.New(filepath.Join(downloader.Path, "TorrentDownloads"), downloader.TorrentInfo)
 	defer downloader.fileWriter.CloseFiles()
 	downloader.checkExistingFiles()
 
@@ -272,6 +274,8 @@ func (downloader *Downloader) StartDownloading() {
 	defer keepAliveTicker.Stop()
 
 	defer downloader.requestPeers(tracker.DOWNLOAD_STOPPED)
+
+	defer downloader.DisconnectedAllPeers()
 
 	startedTime := time.Now()
 	go func() {
