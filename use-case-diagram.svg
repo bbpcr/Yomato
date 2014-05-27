@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" font-family="Arial" font-size="13" width="1288" height="870">
+	<desc>UML class diagram user_interact</desc>
+	<g id="uml-class-model-online-image">
+		<defs>
+			<linearGradient id="greyGradient" x1="0%" y1="0%" x2="0%" y2="100%" spreadMethod="pad">
+				<stop offset="0%" stop-color="#FFFFFF" stop-opacity="1" />
+				<stop offset="100%" stop-color="#E5E5E5" stop-opacity="1" />
+				
+			</linearGradient>
+			<linearGradient id="packageGradient" x1="0%" y1="0%" x2="0%" y2="100%" spreadMethod="pad">
+				<stop offset="0%" stop-color="#FFFFFF" stop-opacity="1" />
+				<stop offset="100%" stop-color="#EFE9DE" stop-opacity="1" />
+				
+			</linearGradient>
+			
+		</defs>
+		<g>
+			<ellipse cx="52" cy="109" rx="10" ry="10" fill="white" stroke="black" stroke-width="1.5" />
+			<line x1="52" y1="119" x2="52" y2="153" stroke-width="1.5" stroke="black" />
+			<line x1="52" y1="153" x2="65" y2="174" stroke-width="1.5" stroke="black" />
+			<line x1="52" y1="153" x2="39" y2="174" stroke-width="1.5" stroke="black" />
+			<line x1="65" y1="136" x2="39" y2="136" stroke-width="1.5" stroke="black" />
+			<text x="52" y="189" text-anchor="middle" font-style="normal" font-weight="normal" fill="black">User</text>
+			
+		</g>
+		<g>
+			<ellipse cx="509" cy="264" rx="50" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="509" y="268" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Add Torrent</text>
+			
+		</g>
+		<g>
+			<ellipse cx="682" cy="151" rx="103" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="682" y="154" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Select Torrent file to Download</text>
+			
+		</g>
+		<g>
+			<ellipse cx="1045" cy="137" rx="54" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="1045" y="140" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Check file tree</text>
+			
+		</g>
+		<g>
+			<ellipse cx="1175" cy="430" rx="94" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="1175" y="433" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Change Dowloading location</text>
+			
+		</g>
+		<g>
+			<ellipse cx="514" cy="440" rx="51" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="514" y="443" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Cancel</text>
+			
+		</g>
+		<g>
+			<ellipse cx="164" cy="374" rx="50" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="164" y="378" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Main Window</text>
+			
+		</g>
+		<g>
+			<ellipse cx="986" cy="300" rx="59" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="986" y="304" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Loading Window</text>
+			
+		</g>
+		<g>
+			<ellipse cx="456" cy="822" rx="63" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="456" y="826" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Torrent Selection</text>
+			
+		</g>
+		<g>
+			<ellipse cx="819" cy="749" rx="58" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="819" y="753" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Remove Torrent</text>
+			
+		</g>
+		<g>
+			<ellipse cx="540" cy="724" rx="95" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="540" y="727" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Torrent file not downloading</text>
+			
+		</g>
+		<g>
+			<ellipse cx="102" cy="654" rx="64" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="102" y="658" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Download Torrent</text>
+			
+		</g>
+		<g>
+			<ellipse cx="265" cy="795" rx="71" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="265" y="798" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Update Progress Bar</text>
+			
+		</g>
+		<g>
+			<ellipse cx="692" cy="30" rx="91" ry="28" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="692" y="34" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Duplicated torrent in queue</text>
+			
+		</g>
+		<g>
+			<ellipse cx="862" cy="472" rx="62" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="862" y="475" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Torrent not in list</text>
+			
+		</g>
+		<g>
+			<ellipse cx="783" cy="600" rx="68" ry="29" fill="url(#greyGradient)" stroke="#CCCCCC" stroke-width="1.0" />
+			<text x="783" y="603" text-anchor="middle" font-style="normal" font-weight="bold" fill="#033656">Update Torrent List</text>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="552,236 638,180" stroke-dasharray="10, 5" />
+			<g transform="translate(638,180)">
+				<g transform="rotate(57)">
+					<polyline fill="none" stroke-width="1" stroke="#000000" points="-4,8 0,0 4,8" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="665,180 531,411" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="76,194 150,346" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="214,358 459,280" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="463,430 214,383" />
+			<g transform="translate(214,383)">
+				<g transform="rotate(-79)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="741,180 929,272" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="1035,166 996,272" />
+			<g transform="translate(996,272)">
+				<g transform="rotate(-160)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="1133,401 1027,328" />
+			<g transform="translate(1027,328)">
+				<g transform="rotate(-55)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="927,318 565,425" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="438,794 182,402" />
+			<g transform="translate(182,402)">
+				<g transform="rotate(-33)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="480,794 515,753" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="635,733 761,744" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="770,721 213,402" />
+			<g transform="translate(213,402)">
+				<g transform="rotate(-60)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="158,402 108,626" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="134,682 231,766" stroke-dasharray="10, 5" />
+			<g transform="translate(231,766)">
+				<g transform="rotate(131)">
+					<polyline fill="none" stroke-width="1" stroke="#000000" points="-4,8 0,0 4,8" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="722,58 956,272" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="649,58 207,346" />
+			<g transform="translate(207,346)">
+				<g transform="rotate(-123)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="966,328 883,443" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="844,501 801,571" />
+			
+		</g>
+		<g>
+			<polyline fill="none" stroke-width="1" stroke="#000000" points="715,575 214,392" />
+			<g transform="translate(214,392)">
+				<g transform="rotate(-70)">
+					<polygon fill="#FFFFFF" stroke-width="1" stroke="#000000" points="-6,10 0,0 6,10 -6,10" />
+					
+				</g>
+				
+			</g>
+			
+		</g>
+		<text x="569" y="196" fill="#000000">« include »</text>
+		<text x="157" y="712" fill="#000000">« include »</text>
+		
+	</g>
+	
+</svg>
