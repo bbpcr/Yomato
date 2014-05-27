@@ -25,6 +25,9 @@ func New(length int) Bitfield {
 }
 
 // Return true if the position `pos` is ON and false otherwise
+/*@ public normal_behavior
+  @ requires pos < bitfield.Length && pos >= 0
+  @*/
 func (bitfield *Bitfield) At(pos int) bool {
 
 	if uint(pos/8) >= bitfield.Length {
@@ -37,6 +40,10 @@ func (bitfield *Bitfield) At(pos int) bool {
 }
 
 // Sets a position ON or OFF
+/*@ public normal_behavior
+  @ requires pos < bitfield.Length && pos >= 0
+  @ ensures bitfield.At(pos) == val
+  @*/
 func (bitfield *Bitfield) Set(pos int, val bool) {
 
 	if uint(pos/8) >= bitfield.Length {
@@ -67,6 +74,9 @@ func (bitfield *Bitfield) Set(pos int, val bool) {
 	bitfield.bytes[pos/8] = num
 }
 
+/*@ public normal_behavior
+  @ requires bitfield.Length == otherBitfield.Length
+  @*/
 func (bitfield *Bitfield) AndNot(otherBitfield Bitfield) *Bitfield {
 	if bitfield.Length != otherBitfield.Length {
 		panic("Bitfield size mismatch")
@@ -91,6 +101,10 @@ func countOneBits(value byte) uint {
 }
 
 // Puts the bytes into bitfield. This isn't a regular copy , instead it or's with all bytes.
+/*@ public normal_behavior
+  @ requires len(bytes) == bitfield.Length
+  @ ensures countOneBits(\old(bitfield)) <= countOneBits(bitfield)
+  @*/
 func (bitfield *Bitfield) Put(bytes []uint8, count int) {
 
 	if count < 0 {
