@@ -119,6 +119,7 @@ func writeExactly(connection *net.TCPConn, buffer []byte, length int) error {
 	}
 
 	bytesWritten := 0
+	connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	for bytesWritten < length {
 		written, err := connection.Write(buffer[bytesWritten:length])
 		if err != nil {
@@ -170,16 +171,7 @@ func (peer *Peer) sendBitfield(bitfieldBytes []byte) error {
 		messageBytes := convertIntsToByteArray(length)
 		messageBytes = append(messageBytes, byte(id))
 		messageBytes = append(messageBytes, bitfieldBytes...)
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(messageBytes)
-		if err != nil || bytesWritten < len(messageBytes) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
-		}
-		return nil
+		return writeExactly(peer.Connection, messageBytes, len(messageBytes))
 	}
 	return errors.New("Peer not connected")
 }
@@ -188,17 +180,7 @@ func (peer *Peer) sendKeepAlive() error {
 	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 0}
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(buf)
-
-		if err != nil || bytesWritten < len(buf) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
-		}
-		return nil
+		return writeExactly(peer.Connection, buf, len(buf))
 	}
 	return errors.New("Peer not connected")
 }
@@ -210,18 +192,11 @@ func (peer *Peer) sendChoke() error {
 	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, CHOKE}
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(buf)
-
-		if err != nil || bytesWritten < len(buf) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
+		err := writeExactly(peer.Connection, buf, len(buf))
+		if err == nil {
+			peer.ClientChoking = true
 		}
-		peer.ClientChoking = true
-		return nil
+		return err
 	}
 	return errors.New("Peer not connected")
 }
@@ -234,18 +209,11 @@ func (peer *Peer) sendUnchoke() error {
 	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, UNCHOKE}
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(buf)
-
-		if err != nil || bytesWritten < len(buf) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
+		err := writeExactly(peer.Connection, buf, len(buf))
+		if err == nil {
+			peer.ClientChoking = false
 		}
-		peer.ClientChoking = false
-		return nil
+		return err
 	}
 	return errors.New("Peer not connected")
 }
@@ -258,19 +226,11 @@ func (peer *Peer) sendInterested() error {
 	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, INTERESTED}
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(buf)
-		// Writes the byte array to the peer
-
-		if err != nil || bytesWritten < len(buf) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
+		err := writeExactly(peer.Connection, buf, len(buf))
+		if err == nil {
+			peer.ClientInterested = true
 		}
-		peer.ClientInterested = true
-		return nil
+		return err
 	}
 	return errors.New("Peer not connected")
 }
@@ -332,18 +292,11 @@ func (peer *Peer) sendUninterested() error {
 	if peer.Status == CONNECTED {
 
 		buf := []byte{0, 0, 0, 1, NOT_INTERESTED}
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		bytesWritten, err := peer.Connection.Write(buf)
-
-		if err != nil || bytesWritten < len(buf) {
-			if err != nil {
-				return err
-			} else {
-				return errors.New(fmt.Sprintf("Insufficient bytes written"))
-			}
+		err := writeExactly(peer.Connection, buf, len(buf))
+		if err == nil {
+			peer.ClientInterested = false
 		}
-		peer.ClientInterested = false
-		return nil
+		return err
 	}
 	return errors.New("Peer not connected")
 
@@ -369,9 +322,7 @@ func (peer *Peer) WriteRequest(params []int) error {
 		// We create one big byte array containing all the requests
 	}
 	if peer.Status == CONNECTED {
-		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
-		_, err := peer.Connection.Write(requestBytes)
-		return err
+		return writeExactly(peer.Connection, requestBytes, len(requestBytes))
 	}
 	return errors.New("Peer not connected")
 }
