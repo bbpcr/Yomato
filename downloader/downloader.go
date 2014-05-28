@@ -90,7 +90,6 @@ func (downloader *Downloader) checkExistingFiles() {
 		} else {
 			missing++
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), "Computed missing pieces in", fmt.Sprintf("%.2fs", time.Since(startTime).Seconds()))
 	fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), "Have", missing, "missing pieces")

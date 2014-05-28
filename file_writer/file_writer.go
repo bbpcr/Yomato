@@ -85,27 +85,31 @@ func (writer *Writer) CheckSha1Sum(pieceIndex int64) bool {
 	buffer := make([]byte, 32*1024)
 	computedHash := sha1.New()
 
+	writer.filesArray[currentFileIndex].Seek(offset, 0)
+
 	for bytesToRead > 0 {
 		writer.fLocker.Lock()
-		writer.filesArray[currentFileIndex].Seek(offset, 0)
-		n, err := writer.filesArray[currentFileIndex].Read(buffer)
+		var n int
+		if bytesToRead < 32*1024 {
+			n, _ = writer.filesArray[currentFileIndex].Read(buffer[:bytesToRead])
+		} else {
+			n, _ = writer.filesArray[currentFileIndex].Read(buffer)
+		}
 		writer.fLocker.Unlock()
 		readed := int64(n)
-		if err == nil {
+		if readed != 0 {
 			bytesToRead -= readed
 			offset += readed
 		} else {
-			if readed == 0 {
-				break
-			} else {
-				bytesToRead -= readed
-				offset += readed
-			}
+			break
 		}
 		computedHash.Write(buffer[:readed])
 		if offset >= writer.TorrentInfo.FileInformations.Files[currentFileIndex].Length {
 			currentFileIndex++
 			offset = 0
+			if currentFileIndex < len(writer.filesArray) {
+				writer.filesArray[currentFileIndex].Seek(offset, 0)
+			}
 		}
 	}
 
