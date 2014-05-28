@@ -71,7 +71,7 @@ func (downloader *Downloader) requestPeers(event int) {
 		for peerIndex := 0; peerIndex < len(trackerResponse.Peers); peerIndex++ {
 			if !downloader.PeersManager.Exists(&trackerResponse.Peers[peerIndex]) {
 				downloader.PeersManager.SetPeerAsDisconnected(&trackerResponse.Peers[peerIndex])
-				go trackerResponse.Peers[peerIndex].EstablishFullConnection(downloader.connectionChan)
+				go trackerResponse.Peers[peerIndex].EstablishFullConnection(downloader.connectionChan, downloader.Bitfield)
 				numPeers++
 			}
 		}
@@ -319,7 +319,7 @@ func (downloader *Downloader) StartDownloading() {
 
 				for _, alivePeer := range downloader.PeersManager.GetAlivePeers() {
 					if alivePeer.Status == peer.DISCONNECTED {
-						go alivePeer.EstablishFullConnection(downloader.connectionChan)
+						go alivePeer.EstablishFullConnection(downloader.connectionChan, downloader.Bitfield)
 					}
 				}
 				fmt.Println(time.Now().Format("[2006.01.02 15:04:05]"), "Reconnecting all alive peers, because of low connections")
@@ -329,7 +329,7 @@ func (downloader *Downloader) StartDownloading() {
 				newConnections := 0
 				for _, alivePeer := range downloader.PeersManager.GetAlivePeers() {
 					if alivePeer.Status == peer.DISCONNECTED {
-						go alivePeer.EstablishFullConnection(downloader.connectionChan)
+						go alivePeer.EstablishFullConnection(downloader.connectionChan, downloader.Bitfield)
 						newConnections++
 						if newConnections == MAX_NEW_CONNECTIONS {
 							break

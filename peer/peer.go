@@ -102,17 +102,32 @@ func readExactly(connection *net.TCPConn, buffer []byte, length int) error {
 	if length > len(buffer) || length < 0 {
 		return errors.New("Invalid parameters")
 	}
-
-	var readed int
-	var err error
 	for bytesReaded < length {
-		readed, err = connection.Read(buffer[bytesReaded:length])
+		readed, err := connection.Read(buffer[bytesReaded:length])
 		if err != nil {
 			return err
 		}
 		bytesReaded += readed
 	}
 	return nil
+}
+
+func writeExactly(connection *net.TCPConn, buffer []byte, length int) error {
+
+	if length > len(buffer) || length < 0 {
+		return errors.New("Invalid parameters")
+	}
+
+	bytesWritten := 0
+	for bytesWritten < length {
+		written, err := connection.Write(buffer[bytesWritten:length])
+		if err != nil {
+			return err
+		}
+		bytesWritten += written
+	}
+	return nil
+
 }
 
 // tryReadMessage returns (type of messasge, message, error) received by a peer
@@ -146,6 +161,27 @@ func (peer *Peer) tryReadMessage(timeout time.Duration, maxBufferSize int) (int,
 		return -1, nil, err
 	}
 	return id, buffer[0 : length-1], nil
+}
+
+func (peer *Peer) sendBitfield(bitfieldBytes []byte) error {
+	if peer.Status == CONNECTED {
+		id := BITFIELD
+		length := 1 + len(bitfieldBytes)
+		messageBytes := convertIntsToByteArray(length)
+		messageBytes = append(messageBytes, byte(id))
+		messageBytes = append(messageBytes, bitfieldBytes...)
+		peer.Connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		bytesWritten, err := peer.Connection.Write(messageBytes)
+		if err != nil || bytesWritten < len(messageBytes) {
+			if err != nil {
+				return err
+			} else {
+				return errors.New(fmt.Sprintf("Insufficient bytes written"))
+			}
+		}
+		return nil
+	}
+	return errors.New("Peer not connected")
 }
 
 func (peer *Peer) sendKeepAlive() error {
@@ -451,7 +487,7 @@ func (peer *Peer) Disconnect() {
 // Establishes full connection with the peer.
 // Full connection means : handshake , reading the bitfield and
 // sending unchoke and interested to the peer.
-func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
+func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication, clientBitfield *bitfield.Bitfield) {
 
 	if peer.Status == CONNECTED {
 		return
@@ -459,6 +495,13 @@ func (peer *Peer) EstablishFullConnection(comm chan ConnectionCommunication) {
 	startTime := time.Now()
 	err := peer.sendHandshake()
 	if err != nil {
+		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
+		return
+	}
+
+	err = peer.sendBitfield(clientBitfield.Encode())
+	if err != nil {
+		peer.Disconnect()
 		comm <- ConnectionCommunication{peer, "ERROR:" + err.Error(), time.Since(startTime)}
 		return
 	}
