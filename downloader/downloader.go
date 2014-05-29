@@ -208,7 +208,7 @@ func (downloader *Downloader) DownloadFromPeer(seeder *peer.Peer) {
 	// and we need to find the best peer who is choked so we can try to make more usable peers
 	for _, connectedPeer := range downloader.PeersManager.GetConnectedPeers() {
 
-		if seeder.IP != connectedPeer.IP && !connectedPeer.Downloading && !connectedPeer.PeerChoking {
+		if seeder.IP != connectedPeer.IP && !connectedPeer.Downloading && !connectedPeer.Active && !connectedPeer.PeerChoking {
 			if bestUnchoked == nil {
 				bestUnchoked = connectedPeer
 			} else if bestUnchoked.ConnectTime > connectedPeer.ConnectTime {
@@ -291,7 +291,7 @@ func (downloader *Downloader) StartDownloading() {
 			// We send a keep alive message , and we try to unchoke the peers that are choked
 			numKeptAlive := 0
 			for _, connectedPeer := range downloader.PeersManager.GetConnectedPeers() {
-				if !connectedPeer.Downloading {
+				if !connectedPeer.Downloading && !connectedPeer.Active {
 					if err := connectedPeer.SendKeepAlive(); err != nil {
 						connectedPeer.Disconnect()
 						downloader.PeersManager.SetPeerAsConnected(connectedPeer)
@@ -302,7 +302,7 @@ func (downloader *Downloader) StartDownloading() {
 
 			numUnchoking := 0
 			for _, connectedPeer := range downloader.PeersManager.GetConnectedPeers() {
-				if !connectedPeer.Active && connectedPeer.PeerChoking {
+				if !connectedPeer.Active && !connectedPeer.Downloading && connectedPeer.PeerChoking {
 					go downloader.ScanForUnchoke(connectedPeer)
 					numUnchoking++
 				}
@@ -341,7 +341,7 @@ func (downloader *Downloader) StartDownloading() {
 
 			numDownloading := downloader.PeersManager.CountDownloadingPeers()
 			for _, connectedPeer := range downloader.PeersManager.GetAlivePeers() {
-				if numDownloading < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Downloading {
+				if numDownloading < MAX_ACTIVE_REQUESTS && !connectedPeer.PeerChoking && !connectedPeer.Downloading && !connectedPeer.Active {
 					numDownloading++
 					go downloader.DownloadFromPeer(connectedPeer)
 				}
